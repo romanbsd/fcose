@@ -70,6 +70,41 @@ final class Rect {
 
   double boundaryDistanceTo(Rect other) => boundaryDisplacementTo(other).length;
 
+  /// Half the movement needed to separate two intersecting rectangles, plus
+  /// [buffer] on each axis. This matches layout-base's
+  /// `IGeometry.calcSeparationAmount`; CoSE negates twice this value when
+  /// converting it to repulsion force on this rectangle.
+  Offset separationAmountTo(Rect other, {required double buffer}) {
+    if (!overlaps(other)) {
+      throw ArgumentError.value(other, 'other', 'rectangles must overlap');
+    }
+    final directionX = center.x < other.center.x ? -1.0 : 1.0;
+    final directionY = center.y < other.center.y ? -1.0 : 1.0;
+    var overlapX = math.min(right, other.right) - math.max(left, other.left);
+    var overlapY = math.min(bottom, other.bottom) - math.max(top, other.top);
+    if (left <= other.left && right >= other.right) {
+      overlapX += math.min(other.left - left, right - other.right);
+    } else if (other.left <= left && other.right >= right) {
+      overlapX += math.min(left - other.left, other.right - right);
+    }
+    if (top <= other.top && bottom >= other.bottom) {
+      overlapY += math.min(other.top - top, bottom - other.bottom);
+    } else if (other.top <= top && other.bottom >= bottom) {
+      overlapY += math.min(top - other.top, other.bottom - bottom);
+    }
+
+    final centerDelta = other.center - center;
+    final slope = centerDelta == Offset.zero ? 1.0 : (centerDelta.y / centerDelta.x).abs();
+    var moveY = slope * overlapX;
+    var moveX = overlapY / slope;
+    if (overlapX < moveX) {
+      moveX = overlapX;
+    } else {
+      moveY = overlapY;
+    }
+    return Offset(-directionX * (moveX / 2 + buffer), -directionY * (moveY / 2 + buffer));
+  }
+
   double _rayScale(Offset direction) {
     final xScale = direction.x == 0 ? double.infinity : width / 2 / direction.x.abs();
     final yScale = direction.y == 0 ? double.infinity : height / 2 / direction.y.abs();

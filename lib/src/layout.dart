@@ -1,10 +1,13 @@
 import 'dart:collection';
 import 'dart:math' as math;
 
+import 'compound_graph.dart';
+import 'constraint_handler.dart';
 import 'constraints.dart';
 import 'geometry.dart';
 import 'model.dart';
 import 'options.dart';
+import 'spectral.dart';
 
 /// Immutable output of an fCoSE layout run.
 final class FcoseResult {
@@ -50,22 +53,22 @@ final class FcoseLayout {
     final working = _WorkingGraph(graph);
     final random = _Random(options.seed);
     final positions = _initialPositions(working, random);
-    _projectConstraints(positions, working);
+    _projectConstraints(positions);
 
     var iterations = 0;
     if (options.quality != LayoutQuality.draft) {
       iterations = _runSpringEmbedder(working, positions);
     }
-    _projectConstraints(positions, working);
+    _projectConstraints(positions);
     _packComponents(working, positions);
-    _projectConstraints(positions, working);
+    _projectConstraints(positions);
 
-    final allPositions = <String, Offset>{...positions};
-    final rectangles = <String, Rect>{};
-    for (final node in working.leaves) {
-      rectangles[node.id] = Rect.fromCenter(positions[node.id]!, node.width, node.height);
-    }
-    _calculateCompoundBounds(graph, allPositions, rectangles);
+    final rectangles = working.compounds.rectangles(positions, padding: options.compoundPadding);
+    final allPositions = <String, Offset>{
+      ...positions,
+      for (final node in graph.nodes)
+        if (working.compounds.isCompound(node.id)) node.id: rectangles[node.id]!.center,
+    };
     return FcoseResult(positions: allPositions, rectangles: rectangles, iterations: iterations);
   }
 
@@ -86,51 +89,36 @@ final class FcoseLayout {
 
   /// Landmark graph-distance embedding corresponding to fCoSE's spectral phase.
   Map<String, Offset> _spectralComponent(_WorkingGraph graph, List<String> component, _Random random) {
-    if (component.length == 1) return {component.single: Offset.zero};
-    final start = component[random.nextInt(component.length)];
-    final fromStart = graph.distances(start, component);
-    final pivotX = _farthest(component, fromStart);
-    final fromX = graph.distances(pivotX, component);
-    final pivotY = _farthest(component, fromX);
-    final fromY = graph.distances(pivotY, component);
-    final diameter = math.max(1, fromX[pivotY] ?? 1);
-    final result = <String, Offset>{};
-    for (final id in component) {
-      final dx = (fromX[id] ?? diameter).toDouble();
-      final dy = (fromY[id] ?? diameter).toDouble();
-      // Classical two-landmark projection. A tiny seeded perturbation avoids
-      // coincident vertices in symmetric graphs before force refinement.
-      final x = (dx - dy) * options.nodeSeparation / 2;
-      final radial = math.max(0, dx * dx - math.pow(x / options.nodeSeparation + diameter / 2, 2));
-      final y = math.sqrt(radial) * options.nodeSeparation;
-      final jitter = Offset(random.nextDouble() - 0.5, random.nextDouble() - 0.5) * 1e-3;
-      result[id] = Offset(x, y) + jitter;
-    }
-    return result;
-  }
-
-  String _farthest(List<String> ids, Map<String, int> distances) {
-    var result = ids.first;
-    for (final id in ids.skip(1)) {
-      if ((distances[id] ?? -1) > (distances[result] ?? -1)) result = id;
-    }
-    return result;
+    return SpectralInitializer(
+      sampleSize: options.sampleSize,
+      samplingType: options.samplingType,
+      nodeSeparation: options.nodeSeparation,
+      tolerance: options.powerIterationTolerance,
+      seed: random.nextInt(0x7fffffff),
+    ).run(component, graph.adjacency).positions;
   }
 
   int _runSpringEmbedder(_WorkingGraph graph, Map<String, Offset> positions) {
     final forces = <String, Offset>{};
     final fixed = options.fixedNodes.map((constraint) => constraint.nodeId).toSet();
-    var coolingFactor = 1.0;
+    var coolingFactor = options.initialEnergyOnIncremental;
     var coolingCycle = 0;
     var totalDisplacement = double.infinity;
     var oldTotalDisplacement = 0.0;
     final maxCoolingCycle = options.maxIterations / 100;
+    final averageIdealLength = graph.edges.isEmpty
+        ? options.idealEdgeLength
+        : graph.edges
+                  .map((edge) => edge.idealLength ?? options.idealEdgeLength)
+                  .reduce((first, second) => first + second) /
+              graph.edges.length;
+    final totalDisplacementThreshold = 0.03 * averageIdealLength * graph.graph.nodes.length;
 
     for (var iteration = 0; iteration < options.maxIterations; iteration++) {
       final iterationNumber = iteration + 1;
       if (iterationNumber == options.maxIterations) return iterationNumber;
       if (iterationNumber % 100 == 0) {
-        final converged = totalDisplacement < 1.5 * graph.leaves.length;
+        final converged = totalDisplacement < totalDisplacementThreshold;
         final oscillating =
             iterationNumber > options.maxIterations / 3 && (totalDisplacement - oldTotalDisplacement).abs() < 2;
         oldTotalDisplacement = totalDisplacement;
@@ -141,68 +129,86 @@ final class FcoseLayout {
           LayoutQuality.defaultQuality => coolingCycle / 3,
           LayoutQuality.proof => 1.0,
         };
-        final exponent = math.log(100 * (1 - options.minTemperature)) / math.log(maxCoolingCycle);
-        coolingFactor = math.max(1 - math.pow(coolingCycle, exponent) / 100 * adjuster, options.minTemperature);
+        final exponent =
+            math.log(100 * (options.initialEnergyOnIncremental - options.minTemperature)) / math.log(maxCoolingCycle);
+        coolingFactor = math.max(
+          options.initialEnergyOnIncremental - math.pow(coolingCycle, exponent) / 100 * adjuster,
+          options.minTemperature,
+        );
       }
-      for (final node in graph.leaves) {
+      final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
+      for (final node in graph.graph.nodes) {
         forces[node.id] = Offset.zero;
       }
 
-      // CoSE repulsion. Node dimensions contribute to the effective distance.
-      for (var i = 0; i < graph.leaves.length; i++) {
-        final first = graph.leaves[i];
-        for (var j = i + 1; j < graph.leaves.length; j++) {
-          final second = graph.leaves[j];
-          final firstRect = Rect.fromCenter(positions[first.id]!, first.width, first.height);
-          final secondRect = Rect.fromCenter(positions[second.id]!, second.width, second.height);
-          if (firstRect.overlaps(secondRect)) {
-            var centers = positions[first.id]! - positions[second.id]!;
-            if (centers.length < 1e-7) {
-              centers = Offset(1e-3 * (i + 1), 1e-3 * (j + 1));
+      // layout-base calculates repulsion only between nodes in the same owner
+      // graph. Compound nodes are ordinary siblings at their parent's level.
+      for (final siblings in graph.graph.childrenByParent.values) {
+        for (var i = 0; i < siblings.length; i++) {
+          final first = siblings[i];
+          for (var j = i + 1; j < siblings.length; j++) {
+            final second = siblings[j];
+            final firstRect = rectangles[first.id]!;
+            final secondRect = rectangles[second.id]!;
+            final firstWeight = graph.compounds.descendantLeaves(first.id).length;
+            final secondWeight = graph.compounds.descendantLeaves(second.id).length;
+            if (firstRect.overlaps(secondRect)) {
+              final childFactor = firstWeight * secondWeight / (firstWeight + secondWeight);
+              final separation = firstRect.separationAmountTo(secondRect, buffer: options.idealEdgeLength / 2);
+              final force = separation * (-2 * childFactor);
+              forces[first.id] = forces[first.id]! + force;
+              forces[second.id] = forces[second.id]! - force;
+              continue;
             }
-            final overlapX = (first.width + second.width) / 2 - centers.x.abs();
-            final overlapY = (first.height + second.height) / 2 - centers.y.abs();
-            final useX = overlapX < overlapY;
-            final sign = useX ? (centers.x < 0 ? -1.0 : 1.0) : (centers.y < 0 ? -1.0 : 1.0);
-            final separation = (useX ? overlapX : overlapY) + options.idealEdgeLength / 2;
-            final force = useX ? Offset(sign * separation * 2, 0) : Offset(0, sign * separation * 2);
+            var delta = secondRect.boundaryDisplacementTo(firstRect);
+            if (delta.length < 1e-7) {
+              delta = firstRect.center - secondRect.center;
+            }
+            if (delta.length < 1e-7) {
+              delta = Offset(1e-3 * (i + 1), 1e-3 * (j + 1));
+            }
+            // CoSE's FR-grid variant only evaluates nodes in the surrounding
+            // range: 2 * (level + 1) * idealEdgeLength. At the root level this
+            // excludes non-neighbouring nodes in Mermaid's linear chains.
+            final repulsionRange = 2 * options.idealEdgeLength;
+            final distanceX =
+                (firstRect.center.x - secondRect.center.x).abs() - (firstRect.width + secondRect.width) / 2;
+            final distanceY =
+                (firstRect.center.y - secondRect.center.y).abs() - (firstRect.height + secondRect.height) / 2;
+            if (distanceX > repulsionRange || distanceY > repulsionRange) continue;
+            final boundaryDistance = math.max(1, delta.length);
+            final magnitude =
+                options.nodeRepulsion * firstWeight * secondWeight / (boundaryDistance * boundaryDistance);
+            final force = delta.normalized() * magnitude;
             forces[first.id] = forces[first.id]! + force;
             forces[second.id] = forces[second.id]! - force;
-            continue;
           }
-          var delta = secondRect.boundaryDisplacementTo(firstRect);
-          if (delta.length < 1e-7) {
-            delta = positions[first.id]! - positions[second.id]!;
-          }
-          if (delta.length < 1e-7) delta = Offset(1e-3 * (i + 1), 1e-3 * (j + 1));
-          // CoSE's FR-grid variant only evaluates nodes in the surrounding
-          // range: 2 * (level + 1) * idealEdgeLength. At the root level this
-          // excludes non-neighbouring nodes in Mermaid's linear chains.
-          final repulsionRange = 2 * options.idealEdgeLength;
-          final distanceX = (positions[first.id]!.x - positions[second.id]!.x).abs() - (first.width + second.width) / 2;
-          final distanceY =
-              (positions[first.id]!.y - positions[second.id]!.y).abs() - (first.height + second.height) / 2;
-          if (distanceX > repulsionRange || distanceY > repulsionRange) continue;
-          final boundaryDistance = math.max(1, delta.length);
-          final magnitude = options.nodeRepulsion / (boundaryDistance * boundaryDistance);
-          final force = delta.normalized() * magnitude;
-          forces[first.id] = forces[first.id]! + force;
-          forces[second.id] = forces[second.id]! - force;
         }
       }
 
-      // Hooke springs; compound endpoints are represented by a descendant leaf.
+      // Hooke springs act on their real endpoints, including compounds.
       for (final edge in graph.edges) {
-        final source = graph.representative(edge.source);
-        final target = graph.representative(edge.target);
+        final source = edge.source;
+        final target = edge.target;
         if (source == target) continue;
-        final sourceNode = graph.nodeById[source]!;
-        final targetNode = graph.nodeById[target]!;
-        final sourceRect = Rect.fromCenter(positions[source]!, sourceNode.width, sourceNode.height);
-        final targetRect = Rect.fromCenter(positions[target]!, targetNode.width, targetNode.height);
+        final sourceRect = rectangles[source]!;
+        final targetRect = rectangles[target]!;
         var delta = sourceRect.boundaryDisplacementTo(targetRect);
         if (delta.length < 1e-7) continue;
-        final ideal = edge.idealLength ?? options.idealEdgeLength;
+        final baseIdeal = edge.idealLength ?? options.idealEdgeLength;
+        final lca = graph.compounds.lowestCommonOwner(source, target);
+        final lcaDepth = lca == null ? 1 : graph.compounds.inclusionDepthOf(lca);
+        final nestingDepth =
+            graph.compounds.inclusionDepthOf(source) + graph.compounds.inclusionDepthOf(target) - 2 * lcaDepth;
+        var ideal = baseIdeal * (1 + options.nestingFactor * nestingDepth);
+        if (graph.compounds.ownerOf(source) != graph.compounds.ownerOf(target)) {
+          final sourceInLca = graph.compounds.childInOwner(source, lca);
+          final targetInLca = graph.compounds.childInOwner(target, lca);
+          ideal +=
+              graph.compounds.estimatedSizeOf(sourceInLca) +
+              graph.compounds.estimatedSizeOf(targetInLca) -
+              2 * _layoutBaseSimpleNodeSize;
+        }
         final elasticity = edge.elasticity ?? options.edgeElasticity;
         final magnitude = elasticity * (delta.length - ideal);
         final force = delta.normalized() * magnitude;
@@ -210,102 +216,59 @@ final class FcoseLayout {
         forces[target] = forces[target]! - force;
       }
 
-      final center = positions.values.fold(Offset.zero, (sum, point) => sum + point) / positions.length.toDouble();
-      totalDisplacement = 0;
-      for (final node in graph.leaves) {
+      final leafDisplacements = {for (final leaf in graph.leaves) leaf.id: Offset.zero};
+      for (final node in graph.graph.nodes) {
         if (fixed.contains(node.id)) continue;
-        final position = positions[node.id]!;
-        // Upstream CoSE applies gravity only to nodes whose owner graph is
-        // disconnected. A connected flat component receives no gravity.
-        final gravityForce = graph.components.length > 1 ? (center - position) * options.gravity : Offset.zero;
-        var displacement = (forces[node.id]! + gravityForce) * coolingFactor;
-        final displacementLimit = coolingFactor * 300;
+        final position = rectangles[node.id]!.center;
+        final owner = graph.compounds.ownerOf(node.id);
+        var gravityForce = Offset.zero;
+        if (!graph.compounds.isOwnerConnected(owner)) {
+          final ownerBounds = graph.compounds.ownerBounds(owner, rectangles);
+          final ownerCenter = ownerBounds.center;
+          final distance = position - ownerCenter;
+          final rangeFactor = owner == null ? options.gravityRange : options.compoundGravityRange;
+          final estimatedSize = math.max(ownerBounds.width, ownerBounds.height);
+          final nodeRect = rectangles[node.id]!;
+          if (distance.x.abs() + nodeRect.width / 2 > estimatedSize * rangeFactor ||
+              distance.y.abs() + nodeRect.height / 2 > estimatedSize * rangeFactor) {
+            final strength = options.gravity * (owner == null ? 1 : options.compoundGravity);
+            gravityForce = (ownerCenter - position) * strength;
+          }
+        }
+        final childWeight = graph.compounds.descendantLeaves(node.id).length;
+        var displacement = (forces[node.id]! + gravityForce) * (coolingFactor / childWeight);
+        final displacementLimit = coolingFactor * 100;
         displacement = Offset(
           displacement.x.clamp(-displacementLimit, displacementLimit),
           displacement.y.clamp(-displacementLimit, displacementLimit),
         );
-        positions[node.id] = position + displacement;
-        totalDisplacement += displacement.x.abs() + displacement.y.abs();
+        // CoSENode first accumulates every compound displacement into its
+        // descendant leaves; only leaf nodes are moved in the subsequent move
+        // phase. Keeping these phases separate also makes every gravity force
+        // use the same iteration geometry.
+        for (final leaf in graph.compounds.descendantLeaves(node.id)) {
+          if (!fixed.contains(leaf)) {
+            leafDisplacements[leaf] = leafDisplacements[leaf]! + displacement;
+          }
+        }
       }
-      _projectConstraints(positions, graph);
+      totalDisplacement = 0;
+      for (final entry in leafDisplacements.entries) {
+        positions[entry.key] = positions[entry.key]! + entry.value;
+        totalDisplacement += entry.value.x.abs() + entry.value.y.abs();
+      }
+      _projectConstraints(positions);
     }
     return options.maxIterations;
   }
 
-  void _projectConstraints(Map<String, Offset> positions, _WorkingGraph graph) {
-    final fixed = {for (final constraint in options.fixedNodes) constraint.nodeId: constraint.position};
-    final fixedX = fixed.keys.map(graph.representative).toSet();
-    final fixedY = fixed.keys.map(graph.representative).toSet();
-    for (final entry in fixed.entries) {
-      positions[graph.representative(entry.key)] = entry.value;
-    }
-    for (final ids in options.alignment.vertical) {
-      _align(ids, positions, graph, fixed, horizontal: false);
-      if (ids.any(fixed.containsKey)) fixedX.addAll(ids.map(graph.representative));
-    }
-    for (final ids in options.alignment.horizontal) {
-      _align(ids, positions, graph, fixed, horizontal: true);
-      if (ids.any(fixed.containsKey)) fixedY.addAll(ids.map(graph.representative));
-    }
-    // Repeated relaxation handles chains of relative constraints without
-    // depending on their input order.
-    for (var pass = 0; pass < options.relativePlacements.length + 1; pass++) {
-      for (final constraint in options.relativePlacements) {
-        final first = graph.representative(constraint.first);
-        final second = graph.representative(constraint.second);
-        final a = positions[first]!;
-        final b = positions[second]!;
-        final gap = constraint.gap ?? options.idealEdgeLength;
-        switch (constraint.axis) {
-          case RelativePlacementAxis.horizontal:
-            if (b.x - a.x < gap) {
-              _movePair(first, second, Offset(gap - (b.x - a.x), 0), positions, fixedX);
-            }
-          case RelativePlacementAxis.vertical:
-            if (b.y - a.y < gap) {
-              _movePair(first, second, Offset(0, gap - (b.y - a.y)), positions, fixedY);
-            }
-        }
-      }
-    }
-    // Fixed positions have final authority, as in upstream ConstraintHandler.
-    for (final entry in fixed.entries) {
-      positions[graph.representative(entry.key)] = entry.value;
-    }
-  }
-
-  void _align(
-    List<String> ids,
-    Map<String, Offset> positions,
-    _WorkingGraph graph,
-    Map<String, Offset> fixed, {
-    required bool horizontal,
-  }) {
-    if (ids.isEmpty) return;
-    final representatives = ids.map(graph.representative).toSet();
-    final fixedId = ids.where(fixed.containsKey).firstOrNull;
-    final coordinate = fixedId != null
-        ? (horizontal ? fixed[fixedId]!.y : fixed[fixedId]!.x)
-        : representatives.map((id) => horizontal ? positions[id]!.y : positions[id]!.x).reduce((a, b) => a + b) /
-              representatives.length;
-    for (final id in representatives) {
-      final old = positions[id]!;
-      positions[id] = horizontal ? Offset(old.x, coordinate) : Offset(coordinate, old.y);
-    }
-  }
-
-  void _movePair(String first, String second, Offset correction, Map<String, Offset> positions, Set<String> fixed) {
-    final firstFixed = fixed.contains(first);
-    final secondFixed = fixed.contains(second);
-    if (firstFixed && secondFixed) return;
-    if (firstFixed) {
-      positions[second] = positions[second]! + correction;
-    } else if (secondFixed) {
-      positions[first] = positions[first]! - correction;
-    } else {
-      positions[first] = positions[first]! - correction / 2;
-      positions[second] = positions[second]! + correction / 2;
-    }
+  void _projectConstraints(Map<String, Offset> positions) {
+    ConstraintHandler(
+      fixedNodes: options.fixedNodes,
+      alignment: options.alignment,
+      relativePlacements: options.relativePlacements,
+      defaultGap: options.idealEdgeLength,
+    ).enforce(positions);
   }
 
   void _packComponents(_WorkingGraph graph, Map<String, Offset> positions) {
@@ -338,27 +301,6 @@ final class FcoseLayout {
       }
       cursorX += area.bounds.width + options.componentSeparation;
       rowHeight = math.max(rowHeight, area.bounds.height);
-    }
-  }
-
-  void _calculateCompoundBounds(FcoseGraph graph, Map<String, Offset> positions, Map<String, Rect> rectangles) {
-    final pending = graph.nodes.where((node) => graph.childrenByParent[node.id]?.isNotEmpty ?? false).toSet();
-    while (pending.isNotEmpty) {
-      final node = pending.firstWhere(
-        (candidate) => graph.childrenByParent[candidate.id]!.every((child) => rectangles.containsKey(child.id)),
-      );
-      final children = graph.childrenByParent[node.id]!;
-      var bounds = rectangles[children.first.id]!;
-      for (final child in children.skip(1)) {
-        bounds = bounds.union(rectangles[child.id]!);
-      }
-      bounds = bounds.inflate(options.compoundPadding);
-      final width = math.max(node.width, bounds.width);
-      final height = math.max(node.height, bounds.height);
-      final rect = Rect.fromCenter(bounds.center, width, height);
-      rectangles[node.id] = rect;
-      positions[node.id] = rect.center;
-      pending.remove(node);
     }
   }
 
@@ -429,11 +371,25 @@ final class FcoseLayout {
     if (options.idealEdgeLength <= 0 || options.nodeSeparation <= 0) {
       throw ArgumentError('layout lengths must be positive');
     }
+    if (options.powerIterationTolerance <= 0) {
+      throw ArgumentError.value(options.powerIterationTolerance, 'powerIterationTolerance', 'must be positive');
+    }
+    if (options.minTemperature <= 0 ||
+        options.initialEnergyOnIncremental <= options.minTemperature ||
+        options.initialEnergyOnIncremental > 1) {
+      throw ArgumentError('cooling energy must satisfy 0 < minTemperature < initialEnergyOnIncremental <= 1');
+    }
   }
 }
 
+/// layout-base `LayoutConstants.SIMPLE_NODE_SIZE`, in logical pixels.
+const _layoutBaseSimpleNodeSize = 40.0;
+
 final class _WorkingGraph {
-  _WorkingGraph(this.graph) : nodeById = graph.nodeById, leaves = List.unmodifiable(graph.leafNodes) {
+  _WorkingGraph(this.graph)
+    : nodeById = graph.nodeById,
+      leaves = List.unmodifiable(graph.leafNodes),
+      compounds = CompoundGraphManager(graph) {
     adjacency = {for (final node in leaves) node.id: <String>{}};
     for (final edge in graph.edges) {
       final source = representative(edge.source);
@@ -447,6 +403,7 @@ final class _WorkingGraph {
   }
 
   final FcoseGraph graph;
+  final CompoundGraphManager compounds;
   final Map<String, FcoseNode> nodeById;
   final List<FcoseNode> leaves;
   List<FcoseEdge> get edges => graph.edges;

@@ -70,7 +70,10 @@ final class FcoseLayout {
   }
 
   Map<String, Offset> _initialPositions(_WorkingGraph graph, _Random random) {
-    if (!options.randomize && graph.leaves.every((node) => node.position != null)) {
+    if (!options.randomize) {
+      if (graph.leaves.any((node) => node.position == null)) {
+        throw StateError('randomize: false requires an initial position for every leaf node');
+      }
       return {for (final node in graph.leaves) node.id: node.position!};
     }
     final positions = <String, Offset>{};
@@ -117,10 +120,30 @@ final class FcoseLayout {
   int _runSpringEmbedder(_WorkingGraph graph, Map<String, Offset> positions) {
     final forces = <String, Offset>{};
     final fixed = options.fixedNodes.map((constraint) => constraint.nodeId).toSet();
-    var stableChecks = 0;
-    var previousEnergy = double.infinity;
+    var coolingFactor = 1.0;
+    var coolingCycle = 0;
+    var totalDisplacement = double.infinity;
+    var oldTotalDisplacement = 0.0;
+    final maxCoolingCycle = options.maxIterations / 100;
 
     for (var iteration = 0; iteration < options.maxIterations; iteration++) {
+      final iterationNumber = iteration + 1;
+      if (iterationNumber == options.maxIterations) return iterationNumber;
+      if (iterationNumber % 100 == 0) {
+        final converged = totalDisplacement < 1.5 * graph.leaves.length;
+        final oscillating =
+            iterationNumber > options.maxIterations / 3 && (totalDisplacement - oldTotalDisplacement).abs() < 2;
+        oldTotalDisplacement = totalDisplacement;
+        if (converged || oscillating) return iterationNumber;
+        coolingCycle++;
+        final adjuster = switch (options.quality) {
+          LayoutQuality.draft => coolingCycle.toDouble(),
+          LayoutQuality.defaultQuality => coolingCycle / 3,
+          LayoutQuality.proof => 1.0,
+        };
+        final exponent = math.log(100 * (1 - options.minTemperature)) / math.log(maxCoolingCycle);
+        coolingFactor = math.max(1 - math.pow(coolingCycle, exponent) / 100 * adjuster, options.minTemperature);
+      }
       for (final node in graph.leaves) {
         forces[node.id] = Offset.zero;
       }
@@ -130,12 +153,37 @@ final class FcoseLayout {
         final first = graph.leaves[i];
         for (var j = i + 1; j < graph.leaves.length; j++) {
           final second = graph.leaves[j];
-          var delta = positions[first.id]! - positions[second.id]!;
+          final firstRect = Rect.fromCenter(positions[first.id]!, first.width, first.height);
+          final secondRect = Rect.fromCenter(positions[second.id]!, second.width, second.height);
+          if (firstRect.overlaps(secondRect)) {
+            var centers = positions[first.id]! - positions[second.id]!;
+            if (centers.length < 1e-7) {
+              centers = Offset(1e-3 * (i + 1), 1e-3 * (j + 1));
+            }
+            final overlapX = (first.width + second.width) / 2 - centers.x.abs();
+            final overlapY = (first.height + second.height) / 2 - centers.y.abs();
+            final useX = overlapX < overlapY;
+            final sign = useX ? (centers.x < 0 ? -1.0 : 1.0) : (centers.y < 0 ? -1.0 : 1.0);
+            final separation = (useX ? overlapX : overlapY) + options.idealEdgeLength / 2;
+            final force = useX ? Offset(sign * separation * 2, 0) : Offset(0, sign * separation * 2);
+            forces[first.id] = forces[first.id]! + force;
+            forces[second.id] = forces[second.id]! - force;
+            continue;
+          }
+          var delta = secondRect.boundaryDisplacementTo(firstRect);
+          if (delta.length < 1e-7) {
+            delta = positions[first.id]! - positions[second.id]!;
+          }
           if (delta.length < 1e-7) delta = Offset(1e-3 * (i + 1), 1e-3 * (j + 1));
-          final boundaryDistance = math.max(
-            1,
-            delta.length - (first.width + first.height + second.width + second.height) / 8,
-          );
+          // CoSE's FR-grid variant only evaluates nodes in the surrounding
+          // range: 2 * (level + 1) * idealEdgeLength. At the root level this
+          // excludes non-neighbouring nodes in Mermaid's linear chains.
+          final repulsionRange = 2 * options.idealEdgeLength;
+          final distanceX = (positions[first.id]!.x - positions[second.id]!.x).abs() - (first.width + second.width) / 2;
+          final distanceY =
+              (positions[first.id]!.y - positions[second.id]!.y).abs() - (first.height + second.height) / 2;
+          if (distanceX > repulsionRange || distanceY > repulsionRange) continue;
+          final boundaryDistance = math.max(1, delta.length);
           final magnitude = options.nodeRepulsion / (boundaryDistance * boundaryDistance);
           final force = delta.normalized() * magnitude;
           forces[first.id] = forces[first.id]! + force;
@@ -148,8 +196,12 @@ final class FcoseLayout {
         final source = graph.representative(edge.source);
         final target = graph.representative(edge.target);
         if (source == target) continue;
-        var delta = positions[target]! - positions[source]!;
-        if (delta.length < 1e-7) delta = const Offset(1e-3, 0);
+        final sourceNode = graph.nodeById[source]!;
+        final targetNode = graph.nodeById[target]!;
+        final sourceRect = Rect.fromCenter(positions[source]!, sourceNode.width, sourceNode.height);
+        final targetRect = Rect.fromCenter(positions[target]!, targetNode.width, targetNode.height);
+        var delta = sourceRect.boundaryDisplacementTo(targetRect);
+        if (delta.length < 1e-7) continue;
         final ideal = edge.idealLength ?? options.idealEdgeLength;
         final elasticity = edge.elasticity ?? options.edgeElasticity;
         final magnitude = elasticity * (delta.length - ideal);
@@ -159,31 +211,23 @@ final class FcoseLayout {
       }
 
       final center = positions.values.fold(Offset.zero, (sum, point) => sum + point) / positions.length.toDouble();
-      final progress = iteration / math.max(1, options.maxIterations - 1);
-      final temperature = math
-          .max(options.minTemperature, options.initialTemperature * math.pow(1 - progress, 2))
-          .toDouble();
-      var energy = 0.0;
+      totalDisplacement = 0;
       for (final node in graph.leaves) {
         if (fixed.contains(node.id)) continue;
         final position = positions[node.id]!;
-        final gravityForce = (center - position) * options.gravity;
-        var displacement = forces[node.id]! + gravityForce;
-        if (displacement.length > temperature) displacement = displacement.normalized() * temperature;
+        // Upstream CoSE applies gravity only to nodes whose owner graph is
+        // disconnected. A connected flat component receives no gravity.
+        final gravityForce = graph.components.length > 1 ? (center - position) * options.gravity : Offset.zero;
+        var displacement = (forces[node.id]! + gravityForce) * coolingFactor;
+        final displacementLimit = coolingFactor * 300;
+        displacement = Offset(
+          displacement.x.clamp(-displacementLimit, displacementLimit),
+          displacement.y.clamp(-displacementLimit, displacementLimit),
+        );
         positions[node.id] = position + displacement;
-        energy += displacement.length;
+        totalDisplacement += displacement.x.abs() + displacement.y.abs();
       }
       _projectConstraints(positions, graph);
-
-      final averageEnergy = energy / math.max(1, graph.leaves.length);
-      if (averageEnergy < options.convergenceThreshold ||
-          (previousEnergy - averageEnergy).abs() < options.convergenceThreshold * 0.01) {
-        stableChecks++;
-        if (stableChecks >= 8) return iteration + 1;
-      } else {
-        stableChecks = 0;
-      }
-      previousEnergy = averageEnergy;
     }
     return options.maxIterations;
   }
@@ -328,6 +372,54 @@ final class FcoseLayout {
     ];
     final unknown = constrained.where((id) => !ids.contains(id)).toSet();
     if (unknown.isNotEmpty) throw ArgumentError.value(unknown, 'constraints', 'unknown node IDs');
+
+    final compoundIds = graph.nodes
+        .where((node) => graph.childrenByParent[node.id]?.isNotEmpty ?? false)
+        .map((node) => node.id)
+        .toSet();
+    final constrainedCompounds = constrained.where(compoundIds.contains).toSet();
+    if (constrainedCompounds.isNotEmpty) {
+      throw ArgumentError.value(
+        constrainedCompounds,
+        'constraints',
+        'fCoSE placement constraints apply to simple nodes only',
+      );
+    }
+
+    for (final axis in RelativePlacementAxis.values) {
+      final edges = options.relativePlacements.where((constraint) => constraint.axis == axis);
+      final outgoing = <String, Set<String>>{};
+      final indegree = <String, int>{};
+      for (final edge in edges) {
+        outgoing.putIfAbsent(edge.first, () => {}).add(edge.second);
+        indegree.putIfAbsent(edge.first, () => 0);
+        indegree[edge.second] = (indegree[edge.second] ?? 0) + 1;
+      }
+      final queue = Queue<String>()..addAll(indegree.keys.where((id) => indegree[id] == 0));
+      var visited = 0;
+      while (queue.isNotEmpty) {
+        final current = queue.removeFirst();
+        visited++;
+        for (final next in outgoing[current] ?? const {}) {
+          indegree[next] = indegree[next]! - 1;
+          if (indegree[next] == 0) queue.add(next);
+        }
+      }
+      if (visited != indegree.length) {
+        throw ArgumentError.value(axis, 'relativePlacements', 'constraints must form a DAG');
+      }
+    }
+
+    final fixed = {for (final item in options.fixedNodes) item.nodeId: item.position};
+    for (final constraint in options.relativePlacements) {
+      final first = fixed[constraint.first];
+      final second = fixed[constraint.second];
+      if (first == null || second == null) continue;
+      final actual = constraint.axis == RelativePlacementAxis.horizontal ? second.x - first.x : second.y - first.y;
+      if (actual < (constraint.gap ?? options.idealEdgeLength)) {
+        throw ArgumentError.value(constraint, 'relativePlacements', 'fixed node positions contradict the required gap');
+      }
+    }
   }
 
   void _validateOptions() {

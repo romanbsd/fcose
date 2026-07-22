@@ -1,8 +1,8 @@
 # fcose
 
-A framework-independent, pure Dart graph layout engine for a Dart port of
-Mermaid.js. It ports the fCoSE execution model and the required CoSE/layout-base
-foundations without depending on JavaScript, Cytoscape, a DOM, Flutter, or FFI.
+A framework-independent, pure Dart graph layout engine under development for a
+Dart port of Mermaid.js. The package is not yet a complete or parity-verified
+fCoSE port and should not be published as a drop-in replacement yet.
 
 The package accepts measured node rectangles and compound parent IDs, then
 returns center positions and final rectangles. Rendering and edge routing stay
@@ -11,12 +11,12 @@ with the Mermaid renderer.
 ## Implemented foundations
 
 - validated undirected compound graph model;
-- deterministic landmark spectral initialization;
+- experimental deterministic landmark initialization;
 - CoSE-style spring, repulsion, gravity, cooling, and convergence;
 - disconnected-component detection and packing;
 - bottom-up compound bounds with configurable padding;
 - fixed-node, horizontal/vertical alignment, and relative-placement constraints;
-- fCoSE `draft`, `defaultQuality`, and `proof` quality modes;
+- typed quality and sampling options (full upstream semantics are still being ported);
 - Mermaid option adapter for `randomize`, `nodeSeparation`,
   `idealEdgeLengthMultiplier`, `edgeElasticity`, and `numIter`.
 
@@ -48,7 +48,7 @@ ports, labels, SVG paths, and icon placement should be computed after layout.
 
 ## Upstream mapping
 
-The implementation follows the three upstream layers:
+The implementation is being split along the three upstream layers:
 
 | Dart concern | Upstream source |
 | --- | --- |

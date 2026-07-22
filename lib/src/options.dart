@@ -8,7 +8,7 @@ enum SamplingType { greedy, random }
 final class FcoseOptions {
   const FcoseOptions({
     this.quality = LayoutQuality.defaultQuality,
-    this.randomize = false,
+    this.randomize = true,
     this.seed = 1,
     this.maxIterations = 2500,
     this.sampleSize = 25,

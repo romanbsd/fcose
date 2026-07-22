@@ -57,6 +57,25 @@ final class Rect {
   bool containsRect(Rect other) =>
       left <= other.left && top <= other.top && right >= other.right && bottom >= other.bottom;
 
+  /// Vector between the two points where the line joining the rectangle
+  /// centers exits this rectangle and enters [other]. This is the edge length
+  /// primitive used by layout-base and CoSE.
+  Offset boundaryDisplacementTo(Rect other) {
+    if (overlaps(other)) return Offset.zero;
+    final delta = other.center - center;
+    final sourceScale = _rayScale(delta);
+    final targetScale = other._rayScale(delta);
+    return delta * (1 - sourceScale - targetScale);
+  }
+
+  double boundaryDistanceTo(Rect other) => boundaryDisplacementTo(other).length;
+
+  double _rayScale(Offset direction) {
+    final xScale = direction.x == 0 ? double.infinity : width / 2 / direction.x.abs();
+    final yScale = direction.y == 0 ? double.infinity : height / 2 / direction.y.abs();
+    return math.min(xScale, yScale);
+  }
+
   Rect inflate(double amount) => Rect(x - amount, y - amount, width + 2 * amount, height + 2 * amount);
 
   Rect shift(Offset delta) => Rect(x + delta.x, y + delta.y, width, height);

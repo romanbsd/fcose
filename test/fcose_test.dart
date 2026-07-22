@@ -41,6 +41,23 @@ void main() {
     });
   });
 
+  group('layout-base geometry', () {
+    test('clips the center line against both node rectangles', () {
+      final source = Rect.fromCenter(const Offset(0, 0), 80, 80);
+      final target = Rect.fromCenter(const Offset(200, 0), 80, 80);
+
+      expect(source.boundaryDisplacementTo(target).x, closeTo(120, 1e-12));
+      expect(source.boundaryDisplacementTo(target).y, 0);
+      expect(source.boundaryDistanceTo(target), closeTo(120, 1e-12));
+    });
+
+    test('returns zero boundary distance for overlapping rectangles', () {
+      final source = Rect.fromCenter(const Offset(0, 0), 80, 80);
+      final target = Rect.fromCenter(const Offset(20, 10), 80, 80);
+      expect(source.boundaryDisplacementTo(target), Offset.zero);
+    });
+  });
+
   group('fCoSE layout', () {
     test('is deterministic and separates a connected chain', () {
       final graph = FcoseGraph(
@@ -165,6 +182,134 @@ void main() {
       expect(options.idealEdgeLength, 60);
       expect(options.edgeElasticity, 0.7);
       expect(options.maxIterations, 321);
+    });
+
+    test('Mermaid adapter assigns topology-specific edge parameters', () {
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'root'),
+          FcoseNode(id: 'a', parentId: 'root'),
+          FcoseNode(id: 'b', parentId: 'root'),
+          FcoseNode(id: 'outside'),
+        ],
+        edges: const [
+          FcoseEdge(id: 'same', source: 'a', target: 'b'),
+          FcoseEdge(id: 'cross', source: 'b', target: 'outside'),
+        ],
+      );
+      const adapter = MermaidFcoseAdapter(iconSize: 80, idealEdgeLengthMultiplier: 1.5, edgeElasticity: 0.45);
+      final configured = adapter.configureGraph(graph);
+
+      expect(adapter.options.quality, LayoutQuality.proof);
+      expect(adapter.options.randomize, isFalse);
+      expect(configured.edges[0].idealLength, 120);
+      expect(configured.edges[0].elasticity, 0.45);
+      expect(configured.edges[1].idealLength, 40);
+      expect(configured.edges[1].elasticity, 0.001);
+    });
+
+    test('treats ideal edge length as boundary-to-boundary distance', () {
+      final result = FcoseLayout(options: const FcoseOptions(seed: 7, idealEdgeLength: 120, maxIterations: 1000)).run(
+        FcoseGraph(
+          nodes: const [
+            FcoseNode(id: 'a', width: 80, height: 80),
+            FcoseNode(id: 'b', width: 80, height: 80),
+          ],
+          edges: const [FcoseEdge(id: 'ab', source: 'a', target: 'b')],
+        ),
+      );
+      final centerDistance = result.positionOf('a').distanceTo(result.positionOf('b'));
+      expect(centerDistance, greaterThan(190));
+      expect(result.rectOf('a').boundaryDistanceTo(result.rectOf('b')), closeTo(120, 12));
+    });
+
+    test('tracks Mermaid 11.16 three-service chain spacing', () {
+      FcoseResult layout(double multiplier) {
+        final ideal = 80 * multiplier;
+        return FcoseLayout(
+          options: FcoseOptions(
+            quality: LayoutQuality.proof,
+            randomize: false,
+            seed: 1,
+            maxIterations: 2500,
+            idealEdgeLength: ideal,
+            edgeElasticity: 0.45,
+            relativePlacements: [
+              RelativePlacementConstraint.horizontal('a', 'b', gap: ideal),
+              RelativePlacementConstraint.horizontal('b', 'c', gap: ideal),
+            ],
+          ),
+        ).run(
+          FcoseGraph(
+            nodes: const [
+              FcoseNode(id: 'a', width: 80, height: 80, position: Offset(0, 50)),
+              FcoseNode(id: 'b', width: 80, height: 80, position: Offset(50, 50)),
+              FcoseNode(id: 'c', width: 80, height: 80, position: Offset(100, 50)),
+            ],
+            edges: [
+              FcoseEdge(id: 'ab', source: 'a', target: 'b', idealLength: ideal),
+              FcoseEdge(id: 'bc', source: 'b', target: 'c', idealLength: ideal),
+            ],
+          ),
+        );
+      }
+
+      final defaults = layout(1.5);
+      final stretched = layout(3);
+      expect(defaults.positionOf('b').x - defaults.positionOf('a').x, closeTo(200.68652784647548, 1e-4));
+      expect(stretched.positionOf('b').x - stretched.positionOf('a').x, closeTo(320.17331510624684, 1e-4));
+    });
+
+    test('requires complete initial positions when randomize is false', () {
+      expect(
+        () => FcoseLayout(options: const FcoseOptions(quality: LayoutQuality.draft, randomize: false)).run(
+          FcoseGraph(
+            nodes: const [
+              FcoseNode(id: 'a', position: Offset.zero),
+              FcoseNode(id: 'b'),
+            ],
+          ),
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('rejects cyclic relative placement constraints', () {
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'a'),
+          FcoseNode(id: 'b'),
+        ],
+      );
+      expect(
+        () => FcoseLayout(
+          options: const FcoseOptions(
+            relativePlacements: [
+              RelativePlacementConstraint.horizontal('a', 'b'),
+              RelativePlacementConstraint.horizontal('b', 'a'),
+            ],
+          ),
+        ).run(graph),
+        throwsArgumentError,
+      );
+    });
+
+    test('rejects impossible constraints between fixed nodes', () {
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'a'),
+          FcoseNode(id: 'b'),
+        ],
+      );
+      expect(
+        () => FcoseLayout(
+          options: const FcoseOptions(
+            fixedNodes: [FixedNodeConstraint('a', Offset.zero), FixedNodeConstraint('b', Offset(10, 0))],
+            relativePlacements: [RelativePlacementConstraint.horizontal('a', 'b', gap: 50)],
+          ),
+        ).run(graph),
+        throwsArgumentError,
+      );
     });
   });
 }

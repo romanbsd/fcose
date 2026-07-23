@@ -984,6 +984,88 @@ void main() {
       expect(result.positionOf('d').y, closeTo(293.93762923723534, 1e-9));
     });
 
+    test('tiles a disconnected compound subtree bottom-up before force refinement', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(quality: LayoutQuality.proof, randomize: false, maxIterations: 10, tile: true),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'group'),
+                FcoseNode(id: 'a', parentId: 'group', width: 60, height: 30, position: Offset(20, 20)),
+                FcoseNode(id: 'b', parentId: 'group', width: 30, height: 60, position: Offset(160, 30)),
+                FcoseNode(id: 'c', parentId: 'group', width: 40, height: 40, position: Offset(80, 160)),
+                FcoseNode(id: 'x', position: Offset(300, 50)),
+                FcoseNode(id: 'y', position: Offset(420, 50)),
+              ],
+              edges: const [FcoseEdge(id: 'xy', source: 'x', target: 'y')],
+            ),
+          );
+
+      expect(result.positionOf('b') - result.positionOf('a'), const Offset(-15, 55));
+      expect(result.positionOf('c') - result.positionOf('a'), const Offset(30, 45));
+      expect(result.rectOf('group').containsRect(result.rectOf('a')), isTrue);
+      expect(result.rectOf('group').containsRect(result.rectOf('b')), isTrue);
+      expect(result.rectOf('group').containsRect(result.rectOf('c')), isTrue);
+    });
+
+    test('groups randomized zero-degree siblings inside a live compound', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.defaultQuality,
+              randomize: true,
+              seed: 7,
+              maxIterations: 10,
+              tile: true,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'parent'),
+                FcoseNode(id: 'a', parentId: 'parent'),
+                FcoseNode(id: 'b', parentId: 'parent'),
+                FcoseNode(id: 'c', parentId: 'parent'),
+                FcoseNode(id: 'd', parentId: 'parent'),
+              ],
+              edges: const [FcoseEdge(id: 'ab', source: 'a', target: 'b')],
+            ),
+          );
+
+      expect(result.positionOf('d') - result.positionOf('c'), const Offset(40, 0));
+      expect(result.rectOf('parent').containsRect(result.rectOf('c')), isTrue);
+      expect(result.rectOf('parent').containsRect(result.rectOf('d')), isTrue);
+      expect(result.positions.keys.toSet(), {'parent', 'a', 'b', 'c', 'd'});
+      expect(result.rectangles.keys.toSet(), {'parent', 'a', 'b', 'c', 'd'});
+    });
+
+    test('repopulates nested tiled compounds from the outside in', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(quality: LayoutQuality.proof, randomize: false, maxIterations: 10, tile: true),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'outer'),
+                FcoseNode(id: 'inner', parentId: 'outer'),
+                FcoseNode(id: 'a', parentId: 'inner', width: 60, height: 30, position: Offset(20, 20)),
+                FcoseNode(id: 'b', parentId: 'inner', width: 30, height: 60, position: Offset(160, 30)),
+                FcoseNode(id: 'c', parentId: 'outer', width: 40, height: 40, position: Offset(80, 160)),
+                FcoseNode(id: 'x', position: Offset(300, 50)),
+                FcoseNode(id: 'y', position: Offset(420, 50)),
+              ],
+              edges: const [FcoseEdge(id: 'xy', source: 'x', target: 'y')],
+            ),
+          );
+
+      expect(result.positionOf('b') - result.positionOf('a'), const Offset(-15, 55));
+      expect(result.positionOf('c') - result.positionOf('a'), const Offset(70, -5));
+      expect(result.rectOf('inner').containsRect(result.rectOf('a')), isTrue);
+      expect(result.rectOf('inner').containsRect(result.rectOf('b')), isTrue);
+      expect(result.rectOf('outer').containsRect(result.rectOf('inner')), isTrue);
+      expect(result.rectOf('outer').containsRect(result.rectOf('c')), isTrue);
+    });
+
     test('computes compound bounds around descendants', () {
       final graph = FcoseGraph(
         nodes: const [

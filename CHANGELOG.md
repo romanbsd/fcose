@@ -7,3 +7,5 @@
   post-growth cooling.
 - Connect disconnected root and nested compound child components through
   upstream-compatible spectral dummy nodes.
+- Add CoSE-style randomized zero-degree grouping and bottom-up clearing and
+  repopulation of fully tiled compound subtrees.

@@ -51,10 +51,9 @@ final class FcoseLayout {
       return FcoseResult(positions: const {}, rectangles: const {}, iterations: 0);
     }
 
-    final rootTiling = _prepareRootZeroDegreeTiling(graph);
-    final working = _WorkingGraph(rootTiling?.graph ?? graph);
     final random = Xorshift32(options.seed);
-    final positions = _initialPositions(working, random);
+    var working = _WorkingGraph(graph);
+    var positions = _initialPositions(working, random);
     final constraintHandler = _constraintHandler;
     if (options.randomize) {
       constraintHandler.transformInitial(positions);
@@ -72,22 +71,28 @@ final class FcoseLayout {
       );
     }
 
+    final tiling = _prepareTiling(graph, positions);
+    if (tiling != null) {
+      working = _WorkingGraph(tiling.graph);
+      positions = tiling.positions;
+    }
+
     var iterations = 0;
     if (options.quality != LayoutQuality.draft) {
       iterations = _runSpringEmbedder(working, positions, constraintHandler, random);
     }
-    if (!_hasConstraints && rootTiling == null) {
+    if (!_hasConstraints && tiling == null) {
       _packComponents(working, positions);
     }
 
     final rectangles = working.compounds.rectangles(positions, padding: options.compoundPadding);
     final allPositions = <String, Offset>{
       ...positions,
-      for (final node in graph.nodes)
+      for (final node in working.graph.nodes)
         if (working.compounds.isCompound(node.id)) node.id: rectangles[node.id]!.center,
     };
     final result = FcoseResult(positions: allPositions, rectangles: rectangles, iterations: iterations);
-    return rootTiling == null ? result : _restoreRootZeroDegreeMembers(rootTiling, result);
+    return tiling == null ? result : _restoreTiling(graph, tiling, result);
   }
 
   Map<String, Offset> _initialPositions(_WorkingGraph graph, Xorshift32 random) {
@@ -616,7 +621,12 @@ final class FcoseLayout {
     }
   }
 
-  _TiledOrganization _tileNodes(List<FcoseNode> members, Map<String, Offset> positions) {
+  _TiledOrganization _tileNodes(
+    List<FcoseNode> members,
+    Map<String, Offset> positions, {
+    double horizontalInset = 0,
+    double verticalInset = 0,
+  }) {
     final indexed = members.indexed.map((entry) => (index: entry.$1, node: entry.$2)).toList()
       ..sort((first, second) {
         final firstArea = first.node.width * first.node.height;
@@ -636,8 +646,8 @@ final class FcoseLayout {
     final rows = <List<FcoseNode>>[];
     final rowWidths = <double>[];
     final rowHeights = <double>[];
-    var width = 0.0;
-    var height = 0.0;
+    var width = horizontalInset * 2;
+    var height = verticalInset * 2;
 
     int shortestRow() {
       var result = 0;
@@ -668,7 +678,7 @@ final class FcoseLayout {
     void insert(FcoseNode node, int rowIndex) {
       if (rowIndex == rows.length) {
         rows.add([]);
-        rowWidths.add(0);
+        rowWidths.add(horizontalInset * 2);
         rowHeights.add(0);
       }
       var newWidth = rowWidths[rowIndex] + node.width;
@@ -694,8 +704,8 @@ final class FcoseLayout {
     }
 
     final tiledPositions = <String, Offset>{};
-    final left = center.x - width / 2;
-    var top = center.y - height / 2;
+    final left = center.x - width / 2 + horizontalInset;
+    var top = center.y - height / 2 + verticalInset;
     for (final row in rows) {
       var x = left;
       var maximumHeight = 0.0;
@@ -709,86 +719,277 @@ final class FcoseLayout {
     return _TiledOrganization(positions: tiledPositions, center: center, width: width, height: height);
   }
 
-  _RootZeroDegreeTiling? _prepareRootZeroDegreeTiling(FcoseGraph graph) {
-    // This is the exact root-level subset of groupZeroDegreeMembers(). The
-    // randomized path must group after spectral initialization, while compound
-    // owners also require clearCompounds()/repopulateCompounds(); both remain
-    // separate follow-up stages rather than being approximated here.
-    if (!options.tile ||
-        options.randomize ||
-        _hasConstraints ||
-        graph.nodes.length != graph.leafNodes.length ||
-        graph.leafNodes.any((node) => node.position == null)) {
-      return null;
-    }
-    final incident = <String>{};
+  _TilingPlan? _prepareTiling(FcoseGraph graph, Map<String, Offset> initialPositions) {
+    if (!options.tile || options.quality == LayoutQuality.draft || _hasConstraints) return null;
+
+    final directDegree = {for (final node in graph.nodes) node.id: 0};
     for (final edge in graph.edges) {
       if (edge.source == edge.target) continue;
-      incident
-        ..add(edge.source)
-        ..add(edge.target);
+      directDegree[edge.source] = directDegree[edge.source]! + 1;
+      directDegree[edge.target] = directDegree[edge.target]! + 1;
     }
-    final members = graph.leafNodes.where((node) => !incident.contains(node.id)).toList();
-    if (members.length < 2) return null;
 
-    const dummyId = 'DummyCompound_undefined';
-    if (graph.nodeById.containsKey(dummyId)) return null;
-    final initialPositions = {for (final node in graph.leafNodes) node.id: node.position!};
-    final organization = _tileNodes(members, initialPositions);
-    final retainedNodes = graph.nodes.where((node) => !organization.positions.containsKey(node.id));
-    final dummy = FcoseNode(
-      id: dummyId,
-      width: organization.width,
-      height: organization.height,
-      position: organization.center,
+    final tiledCompounds = <String, bool>{};
+    bool isTiledCompound(String id) {
+      final cached = tiledCompounds[id];
+      if (cached != null) return cached;
+      final children = graph.childrenByParent[id];
+      if (children == null || children.isEmpty) return tiledCompounds[id] = false;
+      for (final child in children) {
+        if (directDegree[child.id]! > 0) return tiledCompounds[id] = false;
+        if (graph.childrenByParent[child.id]?.isNotEmpty ?? false) {
+          if (!isTiledCompound(child.id)) return tiledCompounds[id] = false;
+        }
+      }
+      return tiledCompounds[id] = true;
+    }
+
+    for (final node in graph.nodes) {
+      isTiledCompound(node.id);
+    }
+    final tiledIds = tiledCompounds.entries.where((entry) => entry.value).map((entry) => entry.key).toSet();
+
+    final compoundOrder = <String>[];
+    void visitCompounds(String? ownerId) {
+      for (final child in graph.childrenByParent[ownerId] ?? const []) {
+        if (graph.childrenByParent[child.id]?.isNotEmpty ?? false) {
+          visitCompounds(child.id);
+          if (tiledIds.contains(child.id)) compoundOrder.add(child.id);
+        }
+      }
+    }
+
+    visitCompounds(null);
+    final nodesById = Map<String, FcoseNode>.of(graph.nodeById);
+    final positions = Map<String, Offset>.of(initialPositions);
+    final groups = <_TiledGroup>[];
+
+    for (final compoundId in compoundOrder) {
+      final original = graph.nodeById[compoundId]!;
+      final members = [for (final child in graph.childrenByParent[compoundId]!) nodesById[child.id]!];
+      final organization = _tileNodes(
+        members,
+        positions,
+        horizontalInset: options.compoundPadding,
+        verticalInset: options.compoundPadding,
+      );
+      final proxy = _tileProxy(original, organization);
+      nodesById[compoundId] = proxy.node;
+      positions[compoundId] = proxy.node.position!;
+      groups.add(
+        _TiledGroup(
+          proxyId: compoundId,
+          members: members,
+          organization: organization,
+          contentOffset: proxy.contentOffset,
+          isDummy: false,
+        ),
+      );
+    }
+
+    final subtreeDegrees = <String, int>{};
+    int degreeWithChildren(String id) => subtreeDegrees.putIfAbsent(
+      id,
+      () =>
+          directDegree[id]! +
+          (graph.childrenByParent[id] ?? const []).fold(0, (sum, child) => sum + degreeWithChildren(child.id)),
     );
-    return _RootZeroDegreeTiling(
-      graph: FcoseGraph(nodes: [...retainedNodes, dummy], edges: graph.edges),
-      members: members,
-      organization: organization,
-      originalBoundsCenter: _leafBounds(graph.leafNodes, initialPositions).center,
-      dummyId: dummyId,
+    final zeroDegreeByOwner = <String?, List<FcoseNode>>{};
+    for (final node in CompoundGraphManager(graph).layoutOrder) {
+      if (degreeWithChildren(node.id) != 0 || (node.parentId != null && tiledIds.contains(node.parentId))) continue;
+      (zeroDegreeByOwner[node.parentId] ??= []).add(nodesById[node.id]!);
+    }
+
+    final dummyNodes = <FcoseNode>[];
+    final zeroDegreeMembers = <String>{};
+    Offset? originalBoundsCenter;
+    var collisionIndex = 1;
+    for (final entry in zeroDegreeByOwner.entries) {
+      if (entry.value.length < 2) continue;
+      var dummyId = 'DummyCompound_${entry.key ?? 'undefined'}';
+      while (graph.nodeById.containsKey(dummyId) || dummyNodes.any((node) => node.id == dummyId)) {
+        dummyId = 'DummyCompound_${entry.key ?? 'undefined'}_${collisionIndex++}';
+      }
+      final inset = entry.key == null ? 0.0 : options.compoundPadding;
+      final organization = _tileNodes(entry.value, positions, horizontalInset: inset, verticalInset: inset);
+      final dummy = FcoseNode(
+        id: dummyId,
+        parentId: entry.key,
+        width: organization.width,
+        height: organization.height,
+        position: organization.center,
+      );
+      dummyNodes.add(dummy);
+      positions[dummyId] = organization.center;
+      zeroDegreeMembers.addAll(entry.value.map((node) => node.id));
+      groups.add(
+        _TiledGroup(
+          proxyId: dummyId,
+          members: entry.value,
+          organization: organization,
+          contentOffset: Offset.zero,
+          isDummy: true,
+        ),
+      );
+      if (entry.key == null && !options.randomize) {
+        final initialRectangles = CompoundGraphManager(
+          graph,
+        ).rectangles(initialPositions, padding: options.compoundPadding);
+        var initialBounds = initialRectangles[graph.childrenByParent[null]!.first.id]!;
+        for (final root in graph.childrenByParent[null]!.skip(1)) {
+          initialBounds = initialBounds.union(initialRectangles[root.id]!);
+        }
+        originalBoundsCenter = initialBounds.center;
+      }
+    }
+
+    bool belowTiledCompound(FcoseNode node) {
+      var parentId = node.parentId;
+      while (parentId != null) {
+        if (tiledIds.contains(parentId)) return true;
+        parentId = graph.nodeById[parentId]!.parentId;
+      }
+      return false;
+    }
+
+    final retained = <FcoseNode>[];
+    for (final node in graph.nodes) {
+      if (belowTiledCompound(node) || zeroDegreeMembers.contains(node.id)) continue;
+      retained.add(nodesById[node.id]!);
+    }
+    retained.addAll(dummyNodes);
+    if (retained.length == graph.nodes.length && dummyNodes.isEmpty) return null;
+
+    final retainedIds = retained.map((node) => node.id).toSet();
+    final transformed = FcoseGraph(
+      nodes: retained,
+      edges: graph.edges.where((edge) => retainedIds.contains(edge.source) && retainedIds.contains(edge.target)),
+    );
+    return _TilingPlan(
+      graph: transformed,
+      positions: {for (final leaf in transformed.leafNodes) leaf.id: positions[leaf.id]!},
+      groups: _orderTiledGroups(groups),
+      originalBoundsCenter: originalBoundsCenter,
     );
   }
 
-  FcoseResult _restoreRootZeroDegreeMembers(_RootZeroDegreeTiling tiling, FcoseResult result) {
-    final dummyRect = result.rectangles[tiling.dummyId]!;
-    final organizationTopLeft = Offset(
-      tiling.organization.center.x - tiling.organization.width / 2,
-      tiling.organization.center.y - tiling.organization.height / 2,
-    );
-    final dummyTopLeft = Offset(dummyRect.left, dummyRect.top);
-    final positions = <String, Offset>{
-      for (final entry in result.positions.entries)
-        if (entry.key != tiling.dummyId) entry.key: entry.value,
-      for (final member in tiling.members)
-        member.id: dummyTopLeft + (tiling.organization.positions[member.id]! - organizationTopLeft),
-    };
-    final rectangles = <String, Rect>{
-      for (final entry in result.rectangles.entries)
-        if (entry.key != tiling.dummyId) entry.key: entry.value,
-      for (final member in tiling.members)
-        member.id: Rect.fromCenter(positions[member.id]!, member.width, member.height),
-    };
-
-    var bounds = rectangles.values.first;
-    for (final rectangle in rectangles.values.skip(1)) {
-      bounds = bounds.union(rectangle);
+  ({FcoseNode node, Offset contentOffset}) _tileProxy(FcoseNode original, _TiledOrganization organization) {
+    var width = organization.width;
+    var height = organization.height;
+    var center = organization.center;
+    var contentOffset = Offset.zero;
+    if (original.labelWidth > 0) {
+      switch (original.labelHorizontalPosition) {
+        case FcoseLabelHorizontalPosition.left:
+          width += original.labelWidth;
+          center += Offset(-original.labelWidth / 2, 0);
+          contentOffset += Offset(original.labelWidth, 0);
+        case FcoseLabelHorizontalPosition.center when original.labelWidth > width:
+          contentOffset += Offset((original.labelWidth - width) / 2, 0);
+          width = original.labelWidth;
+        case FcoseLabelHorizontalPosition.center:
+          break;
+        case FcoseLabelHorizontalPosition.right:
+          width += original.labelWidth;
+          center += Offset(original.labelWidth / 2, 0);
+      }
     }
-    final relocation = tiling.originalBoundsCenter - bounds.center;
-    return FcoseResult(
-      positions: {for (final entry in positions.entries) entry.key: entry.value + relocation},
-      rectangles: {
-        for (final entry in rectangles.entries)
+    if (original.labelHeight > 0) {
+      switch (original.labelVerticalPosition) {
+        case FcoseLabelVerticalPosition.top:
+          height += original.labelHeight;
+          center += Offset(0, -original.labelHeight / 2);
+          contentOffset += Offset(0, original.labelHeight);
+        case FcoseLabelVerticalPosition.center when original.labelHeight > height:
+          contentOffset += Offset(0, (original.labelHeight - height) / 2);
+          height = original.labelHeight;
+        case FcoseLabelVerticalPosition.center:
+          break;
+        case FcoseLabelVerticalPosition.bottom:
+          height += original.labelHeight;
+          center += Offset(0, original.labelHeight / 2);
+      }
+    }
+    return (
+      node: FcoseNode(
+        id: original.id,
+        width: width,
+        height: height,
+        parentId: original.parentId,
+        position: center,
+        labelWidth: original.labelWidth,
+        labelHeight: original.labelHeight,
+        labelHorizontalPosition: original.labelHorizontalPosition,
+        labelVerticalPosition: original.labelVerticalPosition,
+        nodeRepulsion: original.nodeRepulsion,
+      ),
+      contentOffset: contentOffset,
+    );
+  }
+
+  List<_TiledGroup> _orderTiledGroups(List<_TiledGroup> groups) {
+    final pending = groups.toList();
+    final result = <_TiledGroup>[];
+    while (pending.isNotEmpty) {
+      final next = pending.firstWhere(
+        (candidate) => !pending.any(
+          (other) => other != candidate && other.members.any((member) => member.id == candidate.proxyId),
+        ),
+      );
+      result.add(next);
+      pending.remove(next);
+    }
+    return result;
+  }
+
+  FcoseResult _restoreTiling(FcoseGraph graph, _TilingPlan tiling, FcoseResult result) {
+    final positions = Map<String, Offset>.of(result.positions);
+    final rectangles = Map<String, Rect>.of(result.rectangles);
+    for (final group in tiling.groups) {
+      final proxyRect = rectangles[group.proxyId]!;
+      final organizationTopLeft = Offset(
+        group.organization.center.x - group.organization.width / 2,
+        group.organization.center.y - group.organization.height / 2,
+      );
+      final proxyTopLeft = Offset(proxyRect.left, proxyRect.top) + group.contentOffset;
+      for (final member in group.members) {
+        final position = proxyTopLeft + (group.organization.positions[member.id]! - organizationTopLeft);
+        positions[member.id] = position;
+        rectangles[member.id] = Rect.fromCenter(position, member.width, member.height);
+      }
+      if (group.isDummy) {
+        positions.remove(group.proxyId);
+        rectangles.remove(group.proxyId);
+      }
+    }
+
+    final compounds = CompoundGraphManager(graph);
+    var restoredRectangles = compounds.rectangles({
+      for (final leaf in graph.leafNodes) leaf.id: positions[leaf.id]!,
+    }, padding: options.compoundPadding);
+    var restoredPositions = <String, Offset>{
+      for (final leaf in graph.leafNodes) leaf.id: positions[leaf.id]!,
+      for (final node in graph.nodes)
+        if (compounds.isCompound(node.id)) node.id: restoredRectangles[node.id]!.center,
+    };
+    if (tiling.originalBoundsCenter case final originalCenter?) {
+      var bounds = restoredRectangles.values.first;
+      for (final rectangle in restoredRectangles.values.skip(1)) {
+        bounds = bounds.union(rectangle);
+      }
+      final relocation = originalCenter - bounds.center;
+      restoredPositions = {for (final entry in restoredPositions.entries) entry.key: entry.value + relocation};
+      restoredRectangles = {
+        for (final entry in restoredRectangles.entries)
           entry.key: Rect(
             entry.value.left + relocation.x,
             entry.value.top + relocation.y,
             entry.value.width,
             entry.value.height,
           ),
-      },
-      iterations: result.iterations,
-    );
+      };
+    }
+    return FcoseResult(positions: restoredPositions, rectangles: restoredRectangles, iterations: result.iterations);
   }
 
   ConstraintHandler get _constraintHandler => ConstraintHandler(
@@ -1054,20 +1255,34 @@ final class _TiledOrganization {
   final double height;
 }
 
-final class _RootZeroDegreeTiling {
-  const _RootZeroDegreeTiling({
+final class _TilingPlan {
+  const _TilingPlan({
     required this.graph,
-    required this.members,
-    required this.organization,
+    required this.positions,
+    required this.groups,
     required this.originalBoundsCenter,
-    required this.dummyId,
   });
 
   final FcoseGraph graph;
+  final Map<String, Offset> positions;
+  final List<_TiledGroup> groups;
+  final Offset? originalBoundsCenter;
+}
+
+final class _TiledGroup {
+  const _TiledGroup({
+    required this.proxyId,
+    required this.members,
+    required this.organization,
+    required this.contentOffset,
+    required this.isDummy,
+  });
+
+  final String proxyId;
   final List<FcoseNode> members;
   final _TiledOrganization organization;
-  final Offset originalBoundsCenter;
-  final String dummyId;
+  final Offset contentOffset;
+  final bool isDummy;
 }
 
 final class _SpectralGraph {

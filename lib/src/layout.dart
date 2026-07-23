@@ -94,12 +94,20 @@ final class FcoseLayout {
   /// Landmark graph-distance embedding corresponding to fCoSE's spectral phase.
   Map<String, Offset> _spectralComponent(_WorkingGraph graph, List<String> component, _Random random) {
     return SpectralInitializer(
-      sampleSize: options.sampleSize,
-      samplingType: options.samplingType,
-      nodeSeparation: options.nodeSeparation,
-      tolerance: options.powerIterationTolerance,
-      seed: random.nextInt(0x7fffffff),
-    ).run(component, graph.adjacency).positions;
+          sampleSize: options.sampleSize,
+          samplingType: options.samplingType,
+          nodeSeparation: options.nodeSeparation,
+          tolerance: options.powerIterationTolerance,
+          seed: random.nextInt(0x7fffffff),
+        )
+        .run(
+          component,
+          graph.adjacency,
+          widths: {for (final id in component) id: graph.graph.nodeById[id]!.width},
+          initialPositions: {for (final id in component) id: ?graph.graph.nodeById[id]!.position},
+          idealEdgeLength: options.idealEdgeLength,
+        )
+        .positions;
   }
 
   int _runSpringEmbedder(_WorkingGraph graph, Map<String, Offset> positions, ConstraintHandler constraintHandler) {
@@ -130,8 +138,7 @@ final class FcoseLayout {
         if (converged || oscillating) return iterationNumber;
         coolingCycle++;
         final adjuster = switch (options.quality) {
-          LayoutQuality.draft => coolingCycle.toDouble(),
-          LayoutQuality.defaultQuality => coolingCycle / 3,
+          LayoutQuality.draft || LayoutQuality.defaultQuality => coolingCycle.toDouble(),
           LayoutQuality.proof => 1.0,
         };
         final exponent =
@@ -462,13 +469,7 @@ final class _WorkingGraph {
   late final List<List<String>> components;
   final Map<String, String> _representatives = {};
 
-  String representative(String id) => _representatives.putIfAbsent(id, () {
-    var current = nodeById[id]!;
-    while (graph.childrenByParent[current.id]?.isNotEmpty ?? false) {
-      current = graph.childrenByParent[current.id]!.first;
-    }
-    return current.id;
-  });
+  String representative(String id) => _representatives.putIfAbsent(id, () => compounds.spectralRepresentative(id));
 
   Map<String, int> distances(String start, Iterable<String> allowed) {
     final allowedSet = allowed.toSet();

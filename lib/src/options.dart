@@ -44,6 +44,7 @@ final class FcoseOptions {
     int numIter = 2500,
     int seed = 1,
   }) => FcoseOptions(
+    quality: LayoutQuality.proof,
     randomize: randomize,
     nodeSeparation: nodeSeparation,
     idealEdgeLength: baseIdealEdgeLength * idealEdgeLengthMultiplier,

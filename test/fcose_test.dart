@@ -118,6 +118,26 @@ void main() {
       expect(positions['a'], const Offset(25, 5));
       expect(positions['b'], const Offset(100, 0));
     });
+
+    test('selects the least-connected direct leaf as a spectral representative', () {
+      final manager = CompoundGraphManager(
+        FcoseGraph(
+          nodes: const [
+            FcoseNode(id: 'parent'),
+            FcoseNode(id: 'busy', parentId: 'parent'),
+            FcoseNode(id: 'quiet', parentId: 'parent'),
+            FcoseNode(id: 'outside'),
+          ],
+          edges: const [
+            FcoseEdge(id: 'first', source: 'busy', target: 'outside'),
+            FcoseEdge(id: 'second', source: 'busy', target: 'outside'),
+          ],
+        ),
+      );
+
+      expect(manager.spectralRepresentative('parent'), 'quiet');
+      expect(manager.spectralRepresentative('outside'), 'outside');
+    });
   });
 
   group('sampled spectral initialization', () {
@@ -152,7 +172,54 @@ void main() {
       ).run(nodes, adjacency);
       expect(run().samples, run().samples);
       expect(run().samples, hasLength(4));
+      expect(run().samples, ['a', 'b', 'f', 'c']);
       expect(run().positions, run().positions);
+      final positions = run().positions;
+      expect(
+        [for (final node in nodes) positions[node]!.x.abs()],
+        [
+          closeTo(187.0141863310327, 1e-6),
+          closeTo(112.54133928374488, 1e-6),
+          closeTo(37.81887162261311, 1e-6),
+          closeTo(37.15321665236261, 1e-6),
+          closeTo(112.37492554118225, 1e-6),
+          closeTo(187.84625504384584, 1e-6),
+        ],
+      );
+      expect(
+        [for (final node in nodes) positions[node]!.y.abs()],
+        [
+          closeTo(15.499863346637966, 1e-6),
+          closeTo(3.0670306943618226, 1e-6),
+          closeTo(12.35871320860305, 1e-6),
+          closeTo(12.375184196085973, 1e-6),
+          closeTo(3.1164436568103366, 1e-6),
+          closeTo(15.417508409223476, 1e-6),
+        ],
+      );
+    });
+
+    test('uses the upstream one/two-node CoSE shortcut', () {
+      final initializer = SpectralInitializer(
+        sampleSize: 25,
+        samplingType: SamplingType.greedy,
+        nodeSeparation: 75,
+        seed: 1,
+      );
+      final result = initializer.run(
+        ['a', 'b'],
+        const {
+          'a': {'b'},
+          'b': {'a'},
+        },
+        widths: const {'a': 80, 'b': 40},
+        initialPositions: const {'a': Offset(25, 35)},
+        idealEdgeLength: 120,
+      );
+
+      expect(result.samples, isEmpty);
+      expect(result.positions['a'], const Offset(25, 35));
+      expect(result.positions['b'], const Offset(205, 35));
     });
   });
 
@@ -419,6 +486,108 @@ void main() {
       expect(parallel.iterations, single.iterations);
     });
 
+    test('matches one upstream CoSE force-refinement tick', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 2,
+              idealEdgeLength: 120,
+              edgeElasticity: 0.45,
+              nodeRepulsion: 4500,
+              gravity: 0.25,
+              gravityRange: 3.8,
+              initialEnergyOnIncremental: 0.3,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80, position: Offset(50, 50)),
+                FcoseNode(id: 'b', width: 80, height: 80, position: Offset(350, 50)),
+                FcoseNode(id: 'c', width: 80, height: 80, position: Offset(200, 300)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+                FcoseEdge(id: 'ca', source: 'c', target: 'a'),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('a').x, closeTo(68.88960448042269, 1e-9));
+      expect(result.positionOf('a').y, closeTo(59.029161737343614, 1e-9));
+      expect(result.positionOf('b').x, closeTo(331.1103955195773, 1e-9));
+      expect(result.positionOf('b').y, closeTo(59.029161737343614, 1e-9));
+      expect(result.positionOf('c').x, closeTo(200, 1e-9));
+      expect(result.positionOf('c').y, closeTo(281.9416765253128, 1e-9));
+    });
+
+    test('matches the upstream overlap-separation force branch', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 2,
+              idealEdgeLength: 120,
+              edgeElasticity: 0.45,
+              nodeRepulsion: 4500,
+              gravity: 0.25,
+              gravityRange: 3.8,
+              initialEnergyOnIncremental: 0.3,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80, position: Offset(50, 50)),
+                FcoseNode(id: 'b', width: 80, height: 80, position: Offset(70, 60)),
+                FcoseNode(id: 'c', width: 80, height: 80, position: Offset(200, 300)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+                FcoseEdge(id: 'ca', source: 'c', target: 'a'),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('a').x, closeTo(28.41749704240617, 1e-9));
+      expect(result.positionOf('a').y, closeTo(36.529161737343614, 1e-9));
+      expect(result.positionOf('b').x, closeTo(100, 1e-9));
+      expect(result.positionOf('b').y, closeTo(89.81961981528069, 1e-9));
+      expect(result.positionOf('c').x, closeTo(190.61770889098347, 1e-9));
+      expect(result.positionOf('c').y, closeTo(283.6512184473757, 1e-9));
+    });
+
+    test('default quality uses cytoscape-fcose fast cooling', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(randomize: false, maxIterations: 202, idealEdgeLength: 1, edgeElasticity: 0.01),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80, position: Offset(50, 50)),
+                FcoseNode(id: 'b', width: 80, height: 80, position: Offset(1050, 50)),
+                FcoseNode(id: 'c', width: 80, height: 80, position: Offset(200, 900)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+                FcoseEdge(id: 'ca', source: 'c', target: 'a'),
+              ],
+            ),
+          );
+
+      expect(result.iterations, 202);
+      expect(result.positionOf('a').x, closeTo(341.99761397724626, 1e-9));
+      expect(result.positionOf('a').y, closeTo(262.76796095323914, 1e-9));
+      expect(result.positionOf('b').x, closeTo(582.7293147521211, 1e-9));
+      expect(result.positionOf('b').y, closeTo(262.7667011210557, 1e-9));
+      expect(result.positionOf('c').x, closeTo(375.27307127063233, 1e-9));
+      expect(result.positionOf('c').y, closeTo(474.4653379257053, 1e-9));
+    });
+
     test('packs disconnected components without overlap', () {
       final result = FcoseLayout(options: const FcoseOptions(seed: 3, maxIterations: 200)).run(
         FcoseGraph(
@@ -587,6 +756,7 @@ void main() {
         edgeElasticity: 0.7,
         numIter: 321,
       );
+      expect(options.quality, LayoutQuality.proof);
       expect(options.randomize, isFalse);
       expect(options.nodeSeparation, 90);
       expect(options.idealEdgeLength, 60);

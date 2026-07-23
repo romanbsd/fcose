@@ -51,6 +51,34 @@ final class CompoundGraphManager {
 
   bool isCompound(String nodeId) => graph.childrenByParent[nodeId]?.isNotEmpty ?? false;
 
+  /// Leaf used for a compound endpoint in fCoSE's spectral graph.
+  ///
+  /// Upstream follows the first child while a level contains only compounds,
+  /// then chooses the first direct leaf with the fewest original incident
+  /// edges. Ties therefore preserve Cytoscape node order.
+  String spectralRepresentative(String nodeId) {
+    final initialChildren = graph.childrenByParent[nodeId];
+    if (initialChildren == null || initialChildren.isEmpty) return nodeId;
+    var children = initialChildren;
+    while (children.every((node) => isCompound(node.id))) {
+      children = graph.childrenByParent[children.first.id]!;
+    }
+    final leaves = children.where((node) => !isCompound(node.id));
+    var representative = leaves.first;
+    var minimumDegree = _connectedEdgeCount(representative.id);
+    for (final leaf in leaves.skip(1)) {
+      final degree = _connectedEdgeCount(leaf.id);
+      if (degree < minimumDegree) {
+        representative = leaf;
+        minimumDegree = degree;
+      }
+    }
+    return representative.id;
+  }
+
+  int _connectedEdgeCount(String nodeId) =>
+      graph.edges.where((edge) => edge.source == nodeId || edge.target == nodeId).length;
+
   /// Nodes in layout-base `LGraphManager.getAllNodes()` order.
   ///
   /// Each owner graph contributes all of its direct children before child

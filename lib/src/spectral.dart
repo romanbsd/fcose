@@ -27,11 +27,25 @@ final class SpectralInitializer {
   final double tolerance;
   final _SpectralRandom _random;
 
-  SpectralResult run(List<String> nodes, Map<String, Set<String>> adjacency) {
+  SpectralResult run(
+    List<String> nodes,
+    Map<String, Set<String>> adjacency, {
+    Map<String, double> widths = const {},
+    Map<String, Offset> initialPositions = const {},
+    double idealEdgeLength = 50,
+  }) {
     if (nodes.length <= 2) {
-      return SpectralResult({
-        for (var i = 0; i < nodes.length; i++) nodes[i]: Offset(i * nodeSeparation, 0),
-      }, List.of(nodes));
+      if (nodes.isEmpty) return const SpectralResult({}, []);
+      final first = nodes.first;
+      final firstPosition = initialPositions[first] ?? Offset.zero;
+      final positions = <String, Offset>{first: firstPosition};
+      if (nodes case [_, final second]) {
+        positions[second] = Offset(
+          firstPosition.x + (widths[first] ?? 0) / 2 + (widths[second] ?? 0) / 2 + idealEdgeLength,
+          firstPosition.y,
+        );
+      }
+      return SpectralResult(positions, const []);
     }
     final count = math.min(sampleSize, nodes.length);
     final samples = samplingType == SamplingType.greedy
@@ -46,8 +60,17 @@ final class SpectralInitializer {
     final index = {for (var i = 0; i < nodes.length; i++) nodes[i]: i};
     final phi = List.generate(count, (row) => List.generate(count, (column) => c[index[samples[column]]!][row]));
     final inverse = _regularizedInverse(phi);
-    final first = _powerVector(c, inverse);
-    final second = _powerVector(c, inverse, orthogonalTo: first.vector);
+    final initialVectors = List.generate(
+      nodes.length,
+      (_) => (first: _random.nextDouble(), second: _random.nextDouble()),
+    );
+    final first = _powerVector(c, inverse, initial: [for (final values in initialVectors) values.first]);
+    final second = _powerVector(
+      c,
+      inverse,
+      initial: [for (final values in initialVectors) values.second],
+      orthogonalTo: first.vector,
+    );
     return SpectralResult({
       for (var i = 0; i < nodes.length; i++)
         nodes[i]: Offset(
@@ -58,10 +81,10 @@ final class SpectralInitializer {
   }
 
   List<String> _randomSamples(List<String> nodes, int count) {
-    final available = List.of(nodes);
     final result = <String>[];
     while (result.length < count) {
-      result.add(available.removeAt(_random.nextInt(available.length)));
+      final sample = nodes[_random.nextInt(nodes.length)];
+      if (!result.contains(sample)) result.add(sample);
     }
     return result;
   }
@@ -100,10 +123,10 @@ final class SpectralInitializer {
   ({List<double> vector, double value}) _powerVector(
     List<List<double>> c,
     List<List<double>> inverse, {
+    required List<double> initial,
     List<double>? orthogonalTo,
   }) {
-    var vector = List.generate(c.length, (_) => _random.nextDouble());
-    vector = _normalize(vector);
+    var vector = _normalize(initial);
     var previous = 1e-9;
     var eigenvalue = 0.0;
     for (var iteration = 0; iteration < 1000; iteration++) {
@@ -262,12 +285,12 @@ final class _SpectralRandom {
   int _state;
   int _next() {
     var value = _state;
-    value ^= value << 13;
-    value ^= value >>> 17;
-    value ^= value << 5;
+    value = (value ^ (value << 13)) & 0xffffffff;
+    value = (value ^ (value >>> 17)) & 0xffffffff;
+    value = (value ^ (value << 5)) & 0xffffffff;
     return _state = value & 0xffffffff;
   }
 
   double nextDouble() => _next() / 0x100000000;
-  int nextInt(int maximum) => _next() % maximum;
+  int nextInt(int maximum) => (nextDouble() * maximum).floor();
 }

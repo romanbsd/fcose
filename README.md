@@ -57,6 +57,11 @@ Node widths and heights are measured layout dimensions. Edge ideal lengths are
 boundary-to-boundary distances, matching CoSE rather than center-to-center
 distances.
 
+The scalar force defaults can be replaced with typed per-element resolvers:
+`nodeRepulsionFor`, `idealEdgeLengthFor`, and `edgeElasticityFor`. Resolver
+outputs are captured once per layout run. Explicit values on `FcoseNode` and
+`FcoseEdge` take precedence.
+
 ## Implemented foundations
 
 - validated undirected compound graph model;
@@ -77,6 +82,8 @@ distances.
 - bottom-up compound bounds with padding and label geometry;
 - transformed and displacement-relaxed fixed, alignment, and DAG placement
   constraints;
+- typed per-element force resolvers, first-edge handling for parallel edges,
+  and average resolved ideal length semantics for implicit constraint gaps;
 - upstream constraint interactions that disable tiling and component packing;
 - typed `all`, `transformed`, `enforced`, and `cose` constraint-pipeline
   stages, transformed-stage bounds recentering, and draft-quality bypass of
@@ -91,8 +98,9 @@ The largest remaining parity work is:
 
 - broader differential coverage for uncommon nested-compound and constraint
   combinations;
-- adapter semantics for upstream function-valued options where this typed API
-  currently accepts resolved numeric values.
+- optional adapter conveniences for upstream's zero-argument lazy tiling
+  padding callbacks, whose values can already be resolved before constructing
+  `FcoseOptions`.
 
 Browser presentation concerns such as animation, viewport fitting, event
 emission, and Cytoscape collection adaptation are intentionally outside this

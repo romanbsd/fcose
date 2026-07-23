@@ -19,3 +19,7 @@
   CoSE constraint preprocessing and zero-degree tiling.
 - Recenter non-fixed transformed-stage results to their original graph bounds
   without perturbing full-layout coordinates.
+- Add typed per-node and per-edge force resolvers, evaluated once per layout
+  run with explicit element values taking precedence.
+- Match upstream first-edge filtering before callback evaluation and use the
+  average resolved ideal edge length for implicit relative-placement gaps.

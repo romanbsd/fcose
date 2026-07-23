@@ -48,18 +48,21 @@ final class FcoseLayout {
 
   FcoseResult run(FcoseGraph graph) {
     _validateOptions();
-    _validateConstraints(graph);
-    if (graph.nodes.isEmpty) {
+    final resolvedGraph = _resolveElementOptions(graph);
+    if (resolvedGraph.nodes.isEmpty) {
+      _validateConstraints(resolvedGraph, options.idealEdgeLength);
       return FcoseResult(positions: const {}, rectangles: const {}, iterations: 0);
     }
 
     final random = Xorshift32(options.seed);
-    var working = _WorkingGraph(graph);
+    var working = _WorkingGraph(resolvedGraph);
+    final defaultEdgeLength = _averageIdealEdgeLength(working.edges);
+    _validateConstraints(resolvedGraph, defaultEdgeLength);
     final originalGeometry = {for (final leaf in working.leaves) leaf.id: leaf.position ?? Offset.zero};
     final originalComponentCenters = _componentCenters(working, originalGeometry);
     final originalBoundsCenter = _graphBounds(working, originalGeometry).center;
     var positions = _initialPositions(working, random);
-    final constraintHandler = _constraintHandler;
+    final constraintHandler = _constraintHandler(defaultEdgeLength);
     final runsCosePipeline = options.quality != LayoutQuality.draft;
     final transformsConstraints =
         runsCosePipeline &&
@@ -85,7 +88,7 @@ final class FcoseLayout {
       );
     }
 
-    final tiling = _prepareTiling(graph, positions);
+    final tiling = _prepareTiling(resolvedGraph, positions);
     if (tiling != null) {
       working = _WorkingGraph(tiling.graph);
       positions = tiling.positions;
@@ -115,7 +118,60 @@ final class FcoseLayout {
         if (working.compounds.isCompound(node.id)) node.id: rectangles[node.id]!.center,
     };
     final result = FcoseResult(positions: allPositions, rectangles: rectangles, iterations: iterations);
-    return tiling == null ? result : _restoreTiling(graph, tiling, result);
+    return tiling == null ? result : _restoreTiling(resolvedGraph, tiling, result);
+  }
+
+  FcoseGraph _resolveElementOptions(FcoseGraph graph) {
+    final seenPairs = <(String, String)>{};
+    final resolvedEdges = <FcoseEdge>[];
+    for (final edge in graph.edges) {
+      final pair = edge.source.compareTo(edge.target) <= 0 ? (edge.source, edge.target) : (edge.target, edge.source);
+      final resolvesCallbacks = edge.source != edge.target && seenPairs.add(pair);
+      resolvedEdges.add(
+        FcoseEdge(
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          idealLength:
+              edge.idealLength ??
+              (resolvesCallbacks ? options.idealEdgeLengthFor?.call(edge) : null) ??
+              options.idealEdgeLength,
+          elasticity:
+              edge.elasticity ??
+              (resolvesCallbacks ? options.edgeElasticityFor?.call(edge) : null) ??
+              options.edgeElasticity,
+        ),
+      );
+    }
+    return FcoseGraph(
+      nodes: [
+        for (final node in graph.nodes)
+          FcoseNode(
+            id: node.id,
+            width: node.width,
+            height: node.height,
+            parentId: node.parentId,
+            position: node.position,
+            labelWidth: node.labelWidth,
+            labelHeight: node.labelHeight,
+            labelHorizontalPosition: node.labelHorizontalPosition,
+            labelVerticalPosition: node.labelVerticalPosition,
+            nodeRepulsion: node.nodeRepulsion ?? options.nodeRepulsionFor?.call(node) ?? options.nodeRepulsion,
+          ),
+      ],
+      edges: resolvedEdges,
+    );
+  }
+
+  double _averageIdealEdgeLength(Iterable<FcoseEdge> edges) {
+    if (edges.isEmpty) return options.idealEdgeLength;
+    var total = 0.0;
+    var count = 0;
+    for (final edge in edges) {
+      total += edge.idealLength!;
+      count++;
+    }
+    return total / count;
   }
 
   Map<String, Offset> _initialPositions(_WorkingGraph graph, Xorshift32 random) {
@@ -144,7 +200,7 @@ final class FcoseLayout {
               spectral.adjacency,
               widths: {for (final leaf in graph.leaves) leaf.id: leaf.width},
               initialPositions: {for (final leaf in graph.leaves) leaf.id: ?leaf.position},
-              idealEdgeLength: options.idealEdgeLength,
+              idealEdgeLength: _averageIdealEdgeLength(graph.edges),
             )
             .positions;
     return {for (final leaf in graph.leaves) leaf.id: transformed[leaf.id]!};
@@ -189,12 +245,7 @@ final class FcoseLayout {
     var iterations = phase.iterations;
     final coreIterationLimit = phase.iterationLimit;
     final coreOldTotalDisplacement = phase.oldTotalDisplacement;
-    final treePlacementEdgeLength = graph.edges.isEmpty
-        ? options.idealEdgeLength
-        : graph.edges
-                  .map((edge) => edge.idealLength ?? options.idealEdgeLength)
-                  .reduce((first, second) => first + second) /
-              graph.edges.length;
+    final treePlacementEdgeLength = _averageIdealEdgeLength(graph.edges);
 
     for (final round in reduction.rounds.reversed) {
       _restorePrunedRound(round, activeGraph, positions, random, treePlacementEdgeLength);
@@ -294,12 +345,7 @@ final class FcoseLayout {
         ? 0.0
         : math.log(100 * (options.initialEnergyOnIncremental - options.minTemperature)) / math.log(maxCoolingCycle);
     var repulsionPairs = <(FcoseNode, FcoseNode)>[];
-    final averageIdealLength = graph.edges.isEmpty
-        ? options.idealEdgeLength
-        : graph.edges
-                  .map((edge) => edge.idealLength ?? options.idealEdgeLength)
-                  .reduce((first, second) => first + second) /
-              graph.edges.length;
+    final averageIdealLength = _averageIdealEdgeLength(graph.edges);
     final totalDisplacementThreshold = 0.03 * averageIdealLength * graph.graph.nodes.length;
 
     for (var iteration = 0; iteration < maxIterations; iteration++) {
@@ -1063,11 +1109,11 @@ final class FcoseLayout {
     return FcoseResult(positions: restoredPositions, rectangles: restoredRectangles, iterations: result.iterations);
   }
 
-  ConstraintHandler get _constraintHandler => ConstraintHandler(
+  ConstraintHandler _constraintHandler(double defaultGap) => ConstraintHandler(
     fixedNodes: options.fixedNodes,
     alignment: options.alignment,
     relativePlacements: options.relativePlacements,
-    defaultGap: options.idealEdgeLength,
+    defaultGap: defaultGap,
     seed: options.seed,
   );
 
@@ -1130,7 +1176,7 @@ final class FcoseLayout {
     }
   }
 
-  void _validateConstraints(FcoseGraph graph) {
+  void _validateConstraints(FcoseGraph graph, double defaultGap) {
     final constrained = <String>[
       ...options.fixedNodes.map((constraint) => constraint.nodeId),
       ...options.alignment.vertical.expand((group) => group),
@@ -1185,7 +1231,7 @@ final class FcoseLayout {
       final second = fixed[constraint.second];
       if (first == null || second == null) continue;
       final actual = constraint.axis == RelativePlacementAxis.horizontal ? second.x - first.x : second.y - first.y;
-      if (actual < (constraint.gap ?? options.idealEdgeLength)) {
+      if (actual < (constraint.gap ?? defaultGap)) {
         throw ArgumentError.value(constraint, 'relativePlacements', 'fixed node positions contradict the required gap');
       }
     }

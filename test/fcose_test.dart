@@ -737,6 +737,63 @@ void main() {
       expect(result.positionOf('c').y, closeTo(300.8639688325547, 1e-9));
     });
 
+    test('resolves upstream per-element force callbacks once per layout run', () {
+      final nodeCalls = <String>[];
+      final idealLengthCalls = <String>[];
+      final elasticityCalls = <String>[];
+      final result =
+          FcoseLayout(
+            options: FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 2,
+              idealEdgeLength: 120,
+              edgeElasticity: 0.45,
+              gravity: 0,
+              initialEnergyOnIncremental: 0.3,
+              nodeRepulsionFor: (node) {
+                nodeCalls.add(node.id);
+                return switch (node.id) {
+                  'a' => 1000,
+                  'b' => 9000,
+                  _ => 4500,
+                };
+              },
+              idealEdgeLengthFor: (edge) {
+                idealLengthCalls.add(edge.id);
+                return 120;
+              },
+              edgeElasticityFor: (edge) {
+                elasticityCalls.add(edge.id);
+                return 0;
+              },
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80, position: Offset(50, 50)),
+                FcoseNode(id: 'b', width: 80, height: 80, position: Offset(350, 50)),
+                FcoseNode(id: 'c', width: 80, height: 80, position: Offset(200, 300)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+                FcoseEdge(id: 'ca', source: 'c', target: 'a'),
+              ],
+            ),
+          );
+
+      expect(nodeCalls, ['a', 'b', 'c']);
+      expect(idealLengthCalls, ['ab', 'bc', 'ca']);
+      expect(elasticityCalls, ['ab', 'bc', 'ca']);
+      expect(result.positionOf('a').x, closeTo(49.420136929912445, 1e-9));
+      expect(result.positionOf('a').y, closeTo(49.771008899324826, 1e-9));
+      expect(result.positionOf('b').x, closeTo(350.79771567254494, 1e-9));
+      expect(result.positionOf('b').y, closeTo(49.36502226812051, 1e-9));
+      expect(result.positionOf('c').x, closeTo(199.78214739754267, 1e-9));
+      expect(result.positionOf('c').y, closeTo(300.8639688325547, 1e-9));
+    });
+
     test('matches upstream tree reduction, regrowth, and post-growth cooling', () {
       final result =
           FcoseLayout(
@@ -1212,6 +1269,73 @@ void main() {
       expect(result.positionOf('c').x - result.positionOf('b').x, greaterThanOrEqualTo(80));
     });
 
+    test('uses average resolved edge length for an omitted relative-placement gap', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              step: LayoutStep.enforced,
+              idealEdgeLength: 50,
+              relativePlacements: [RelativePlacementConstraint.horizontal('a', 'c')],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset.zero),
+                FcoseNode(id: 'b', position: Offset(10, 0)),
+                FcoseNode(id: 'c', position: Offset(20, 0)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b', idealLength: 80),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c', idealLength: 160),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('c').x - result.positionOf('a').x, closeTo(120, 1e-9));
+    });
+
+    test('resolves only the first non-loop edge between each node pair', () {
+      final idealLengthCalls = <String>[];
+      final elasticityCalls = <String>[];
+      final result =
+          FcoseLayout(
+            options: FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              step: LayoutStep.enforced,
+              relativePlacements: const [RelativePlacementConstraint.horizontal('a', 'c')],
+              idealEdgeLengthFor: (edge) {
+                idealLengthCalls.add(edge.id);
+                return edge.id == 'ab' ? 80 : 160;
+              },
+              edgeElasticityFor: (edge) {
+                elasticityCalls.add(edge.id);
+                return 0.45;
+              },
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset.zero),
+                FcoseNode(id: 'b', position: Offset(10, 0)),
+                FcoseNode(id: 'c', position: Offset(20, 0)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'ba-duplicate', source: 'b', target: 'a'),
+                FcoseEdge(id: 'aa-loop', source: 'a', target: 'a'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+              ],
+            ),
+          );
+
+      expect(idealLengthCalls, ['ab', 'bc']);
+      expect(elasticityCalls, ['ab', 'bc']);
+      expect(result.positionOf('c').x - result.positionOf('a').x, closeTo(120, 1e-9));
+    });
+
     test('exposes the transformed constraint-debug stage without refinement', () {
       final result =
           FcoseLayout(
@@ -1662,6 +1786,29 @@ void main() {
           options: const FcoseOptions(
             fixedNodes: [FixedNodeConstraint('a', Offset.zero), FixedNodeConstraint('b', Offset(10, 0))],
             relativePlacements: [RelativePlacementConstraint.horizontal('a', 'b', gap: 50)],
+          ),
+        ).run(graph),
+        throwsArgumentError,
+      );
+    });
+
+    test('validates fixed-node constraints against the average resolved edge length', () {
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'a'),
+          FcoseNode(id: 'b'),
+          FcoseNode(id: 'c'),
+        ],
+        edges: const [
+          FcoseEdge(id: 'ab', source: 'a', target: 'b', idealLength: 80),
+          FcoseEdge(id: 'bc', source: 'b', target: 'c', idealLength: 160),
+        ],
+      );
+      expect(
+        () => FcoseLayout(
+          options: const FcoseOptions(
+            fixedNodes: [FixedNodeConstraint('a', Offset.zero), FixedNodeConstraint('c', Offset(100, 0))],
+            relativePlacements: [RelativePlacementConstraint.horizontal('a', 'c')],
           ),
         ).run(graph),
         throwsArgumentError,

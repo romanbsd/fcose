@@ -1,4 +1,5 @@
 import 'constraints.dart';
+import 'model.dart';
 
 enum LayoutQuality { draft, defaultQuality, proof }
 
@@ -10,6 +11,9 @@ enum SamplingType { greedy, random }
 enum PackingUtility { adjustedFullness, weighted }
 
 typedef TilingComparator = int Function(String firstNodeId, String secondNodeId);
+typedef NodeRepulsionResolver = double Function(FcoseNode node);
+typedef IdealEdgeLengthResolver = double Function(FcoseEdge edge);
+typedef EdgeElasticityResolver = double Function(FcoseEdge edge);
 
 /// Configuration corresponding to the public options of cytoscape-fcose 2.2.0.
 final class FcoseOptions {
@@ -24,8 +28,11 @@ final class FcoseOptions {
     this.nodeSeparation = 75,
     this.powerIterationTolerance = 1e-7,
     this.idealEdgeLength = 50,
+    this.idealEdgeLengthFor,
     this.edgeElasticity = 0.45,
+    this.edgeElasticityFor,
     this.nodeRepulsion = 4500,
+    this.nodeRepulsionFor,
     this.gravity = 0.25,
     this.gravityRange = 3.8,
     this.compoundGravity = 1,
@@ -63,8 +70,26 @@ final class FcoseOptions {
   final double nodeSeparation;
   final double powerIterationTolerance;
   final double idealEdgeLength;
+
+  /// Resolves fCoSE's function-valued `idealEdgeLength(edge)` option.
+  ///
+  /// An edge's explicit [FcoseEdge.idealLength] takes precedence.
+  final IdealEdgeLengthResolver? idealEdgeLengthFor;
+
   final double edgeElasticity;
+
+  /// Resolves fCoSE's function-valued `edgeElasticity(edge)` option.
+  ///
+  /// An edge's explicit [FcoseEdge.elasticity] takes precedence.
+  final EdgeElasticityResolver? edgeElasticityFor;
+
   final double nodeRepulsion;
+
+  /// Resolves fCoSE's function-valued `nodeRepulsion(node)` option.
+  ///
+  /// A node's explicit [FcoseNode.nodeRepulsion] takes precedence.
+  final NodeRepulsionResolver? nodeRepulsionFor;
+
   final double gravity;
   final double gravityRange;
   final double compoundGravity;

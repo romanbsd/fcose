@@ -2083,10 +2083,10 @@ void main() {
     test('tracks Mermaid 11.16 row-aligned fan-in geometry', () {
       final graph = FcoseGraph(
         nodes: const [
-          FcoseNode(id: 'src1', width: 80, height: 80, position: Offset(45, 45)),
-          FcoseNode(id: 'src2', width: 80, height: 80, position: Offset(135, 45)),
-          FcoseNode(id: 'src3', width: 80, height: 80, position: Offset(45, 135)),
-          FcoseNode(id: 'proc', width: 80, height: 80, position: Offset(135, 135)),
+          FcoseNode(id: 'src1', width: 80, height: 80, position: Offset.zero),
+          FcoseNode(id: 'src2', width: 80, height: 80, position: Offset.zero),
+          FcoseNode(id: 'src3', width: 80, height: 80, position: Offset.zero),
+          FcoseNode(id: 'proc', width: 80, height: 80, position: Offset.zero),
         ],
         edges: const [
           FcoseEdge(id: 'src1-proc', source: 'src1', target: 'proc'),

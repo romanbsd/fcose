@@ -1,6 +1,8 @@
 import 'dart:collection';
+import 'dart:math' as math;
 
 import 'constraints.dart';
+import 'geometry.dart';
 import 'layout.dart';
 import 'model.dart';
 import 'options.dart';
@@ -11,6 +13,9 @@ const _crossParentIdealLengthFactor = 0.5;
 
 /// Mermaid's weak elasticity for edges that cross compound parents.
 const _crossParentElasticity = 0.001;
+
+/// Cytoscape's grid layout leaves this gap between adjacent node boxes.
+const _mermaidInitialGridGap = 10.0;
 
 enum MermaidAlignmentDirection { row, column }
 
@@ -172,10 +177,40 @@ final class MermaidFcoseAdapter {
   }) {
     final data = buildArchitectureData(graph, directionalEdges);
     return configureLayout(
-      graph,
+      _withMermaidAlignmentGrid(graph, layoutHints),
       spatialMaps: data.spatialMaps,
       groupAlignments: data.groupAlignments,
       layoutHints: layoutHints,
+    );
+  }
+
+  FcoseGraph _withMermaidAlignmentGrid(FcoseGraph graph, List<MermaidAlignmentHint> layoutHints) {
+    if (randomize || layoutHints.isEmpty) return graph;
+    final leaves = graph.leafNodes;
+    final columns = math.sqrt(leaves.length).ceil();
+    final step = iconSize + _mermaidInitialGridGap;
+    final origin = step / 2;
+    final positions = {
+      for (final (index, node) in leaves.indexed)
+        node.id: Offset(origin + (index % columns) * step, origin + (index ~/ columns) * step),
+    };
+    return FcoseGraph(
+      nodes: [
+        for (final node in graph.nodes)
+          FcoseNode(
+            id: node.id,
+            width: node.width,
+            height: node.height,
+            parentId: node.parentId,
+            position: positions[node.id] ?? node.position,
+            labelWidth: node.labelWidth,
+            labelHeight: node.labelHeight,
+            labelHorizontalPosition: node.labelHorizontalPosition,
+            labelVerticalPosition: node.labelVerticalPosition,
+            nodeRepulsion: node.nodeRepulsion,
+          ),
+      ],
+      edges: graph.edges,
     );
   }
 

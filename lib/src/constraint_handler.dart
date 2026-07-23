@@ -385,6 +385,8 @@ final class ConstraintHandler {
     required bool horizontal,
   }) {
     for (final group in alignments) {
+      // Match cose-base's raw alignment arrays exactly: duplicate IDs receive
+      // duplicate weight in the per-tick displacement average.
       final value = group.any(fixed.contains)
           ? 0.0
           : group.map((node) => horizontal ? displacements[node]!.x : displacements[node]!.y).reduce((a, b) => a + b) /
@@ -526,6 +528,20 @@ final class ConstraintHandler {
       components.add(component);
     }
     final originalIndegree = Map<String, int>.of(indegree);
+    final queue = <String>[...indegree.keys.where((group) => indegree[group] == 0)];
+    final order = <String>[];
+    while (queue.isNotEmpty) {
+      final current = queue.removeLast();
+      order.add(current);
+      for (final edge in outgoing[current] ?? const []) {
+        indegree[edge.target] = indegree[edge.target]! - 1;
+        if (indegree[edge.target] == 0) queue.add(edge.target);
+      }
+    }
+    if (order.length != indegree.length) {
+      throw ArgumentError('relative placement constraints must form a DAG');
+    }
+
     for (final component in components) {
       final sources = component.where((group) => originalIndegree[group] == 0).toList();
       for (final group in component) {
@@ -544,19 +560,6 @@ final class ConstraintHandler {
           values[source] = sourceCenter;
         }
       }
-    }
-    final queue = <String>[...indegree.keys.where((group) => indegree[group] == 0)];
-    final order = <String>[];
-    while (queue.isNotEmpty) {
-      final current = queue.removeLast();
-      order.add(current);
-      for (final edge in outgoing[current] ?? const []) {
-        indegree[edge.target] = indegree[edge.target]! - 1;
-        if (indegree[edge.target] == 0) queue.add(edge.target);
-      }
-    }
-    if (order.length != indegree.length) {
-      throw ArgumentError('relative placement constraints must form a DAG');
     }
 
     final past = {

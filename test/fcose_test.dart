@@ -525,6 +525,39 @@ void main() {
       );
     });
 
+    test('rejects relative cycles introduced by alignment groups', () {
+      final handler = ConstraintHandler(
+        fixedNodes: const [],
+        alignment: const AlignmentConstraint(
+          vertical: [
+            ['a', 'b'],
+            ['c', 'd'],
+          ],
+        ),
+        relativePlacements: const [
+          RelativePlacementConstraint.horizontal('a', 'c', gap: 10),
+          RelativePlacementConstraint.horizontal('d', 'b', gap: 10),
+        ],
+        defaultGap: 50,
+      );
+
+      expect(
+        () => handler.enforce({
+          'a': const Offset(0, 0),
+          'b': const Offset(0, 10),
+          'c': const Offset(100, 0),
+          'd': const Offset(100, 10),
+        }),
+        throwsA(
+          isA<ArgumentError>().having(
+            (error) => error.message,
+            'message',
+            'relative placement constraints must form a DAG',
+          ),
+        ),
+      );
+    });
+
     test('rewrites pending displacements before relative nodes move', () {
       final positions = <String, Offset>{'a': const Offset(0, 0), 'b': const Offset(100, 0)};
       final displacements = <String, Offset>{'a': const Offset(10, 0), 'b': const Offset(-10, 0)};
@@ -748,6 +781,25 @@ void main() {
         ),
       );
       expect(result.boundsOf({'a', 'b'}).overlaps(result.boundsOf({'x', 'y'})), isFalse);
+    });
+
+    test('packs disconnected top-level compounds without separating their descendants', () {
+      final result =
+          FcoseLayout(options: const FcoseOptions(quality: LayoutQuality.draft, randomize: false, tile: false)).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'group'),
+                FcoseNode(id: 'a', parentId: 'group', position: Offset(0, 0)),
+                FcoseNode(id: 'b', parentId: 'group', position: Offset(20, 0)),
+                FcoseNode(id: 'outside', position: Offset(200, 0)),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('a').distanceTo(result.positionOf('b')), 20);
+      expect(result.rectOf('group').containsRect(result.rectOf('a')), isTrue);
+      expect(result.rectOf('group').containsRect(result.rectOf('b')), isTrue);
+      expect(result.rectOf('group').overlaps(result.rectOf('outside')), isFalse);
     });
 
     test('matches upstream tiling for flat zero-degree nodes', () {

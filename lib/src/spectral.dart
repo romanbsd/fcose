@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'geometry.dart';
 import 'options.dart';
+import 'random.dart';
 
 final class SpectralResult {
   const SpectralResult(this.positions, this.samples);
@@ -18,14 +19,14 @@ final class SpectralInitializer {
     required this.nodeSeparation,
     required this.seed,
     this.tolerance = 1e-7,
-  }) : _random = _SpectralRandom(seed);
+  }) : _random = Xorshift32(seed);
 
   final int sampleSize;
   final SamplingType samplingType;
   final double nodeSeparation;
   final int seed;
   final double tolerance;
-  final _SpectralRandom _random;
+  final Xorshift32 _random;
 
   SpectralResult run(
     List<String> nodes,
@@ -283,18 +284,3 @@ const _singularValueTolerance = 1e-12;
 const _jacobiTolerance = 1e-12;
 const _minimumJacobiSweeps = 32;
 const _jacobiSweepsPerEntry = 8;
-
-final class _SpectralRandom {
-  _SpectralRandom(int seed) : _state = seed & 0xffffffff;
-  int _state;
-  int _next() {
-    var value = _state;
-    value = (value ^ (value << 13)) & 0xffffffff;
-    value = (value ^ (value >>> 17)) & 0xffffffff;
-    value = (value ^ (value << 5)) & 0xffffffff;
-    return _state = value & 0xffffffff;
-  }
-
-  double nextDouble() => _next() / 0x100000000;
-  int nextInt(int maximum) => (nextDouble() * maximum).floor();
-}

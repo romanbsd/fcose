@@ -7,6 +7,7 @@ import 'constraints.dart';
 import 'geometry.dart';
 import 'model.dart';
 import 'options.dart';
+import 'random.dart';
 import 'spectral.dart';
 
 /// Immutable output of an fCoSE layout run.
@@ -52,7 +53,7 @@ final class FcoseLayout {
 
     final rootTiling = _prepareRootZeroDegreeTiling(graph);
     final working = _WorkingGraph(rootTiling?.graph ?? graph);
-    final random = _Random(options.seed);
+    final random = Xorshift32(options.seed);
     final positions = _initialPositions(working, random);
     final constraintHandler = _constraintHandler;
     if (options.randomize) {
@@ -89,7 +90,7 @@ final class FcoseLayout {
     return rootTiling == null ? result : _restoreRootZeroDegreeMembers(rootTiling, result);
   }
 
-  Map<String, Offset> _initialPositions(_WorkingGraph graph, _Random random) {
+  Map<String, Offset> _initialPositions(_WorkingGraph graph, Xorshift32 random) {
     if (!options.randomize) {
       if (graph.leaves.any((node) => node.position == null)) {
         throw StateError('randomize: false requires an initial position for every leaf node');
@@ -105,13 +106,13 @@ final class FcoseLayout {
   }
 
   /// Landmark graph-distance embedding corresponding to fCoSE's spectral phase.
-  Map<String, Offset> _spectralComponent(_WorkingGraph graph, List<String> component, _Random random) {
+  Map<String, Offset> _spectralComponent(_WorkingGraph graph, List<String> component, Xorshift32 random) {
     return SpectralInitializer(
           sampleSize: options.sampleSize,
           samplingType: options.samplingType,
           nodeSeparation: options.nodeSeparation,
           tolerance: options.powerIterationTolerance,
-          seed: random.nextInt(0x7fffffff),
+          seed: random.nextUint32() % 0x7fffffff,
         )
         .run(
           component,
@@ -193,6 +194,8 @@ final class FcoseLayout {
 
     for (var iteration = 0; iteration < maxIterations; iteration++) {
       final iterationNumber = iteration + 1;
+      // cose-base's tick() increments totalIterations, then terminates at the
+      // limit before calculating that tick's forces.
       if (iterationNumber == maxIterations) return iterationNumber;
       if (iterationNumber % _convergenceCheckPeriod == 0) {
         final converged = totalDisplacement < totalDisplacementThreshold;
@@ -595,16 +598,15 @@ final class FcoseLayout {
       options.relativePlacements.isNotEmpty;
 
   void _packComponents(_WorkingGraph graph, Map<String, Offset> positions) {
-    if (graph.components.length < 2 || options.fixedNodes.isNotEmpty) return;
+    if (graph.packingComponents.length < 2 || options.fixedNodes.isNotEmpty) return;
+    final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
     final areas = <({List<String> ids, Rect bounds})>[];
-    for (final component in graph.components) {
-      Rect? bounds;
-      for (final id in component) {
-        final node = graph.nodeById[id]!;
-        final rect = Rect.fromCenter(positions[id]!, node.width, node.height);
-        bounds = bounds == null ? rect : bounds.union(rect);
+    for (final component in graph.packingComponents) {
+      var bounds = rectangles[component.roots.first]!;
+      for (final root in component.roots.skip(1)) {
+        bounds = bounds.union(rectangles[root]!);
       }
-      areas.add((ids: component, bounds: bounds!));
+      areas.add((ids: component.leaves, bounds: bounds));
     }
     areas.sort((a, b) => b.bounds.height.compareTo(a.bounds.height));
     final totalArea = areas.fold(0.0, (sum, area) => sum + area.bounds.width * area.bounds.height);
@@ -789,6 +791,7 @@ final class _WorkingGraph {
       }
     }
     components = _findComponents();
+    packingComponents = _findPackingComponents();
   }
 
   final FcoseGraph graph;
@@ -798,6 +801,7 @@ final class _WorkingGraph {
   late final List<FcoseEdge> edges;
   late final Map<String, Set<String>> adjacency;
   late final List<List<String>> components;
+  late final List<({List<String> roots, List<String> leaves})> packingComponents;
   final Map<String, String> _representatives = {};
 
   String representative(String id) => _representatives.putIfAbsent(id, () => compounds.spectralRepresentative(id));
@@ -821,22 +825,36 @@ final class _WorkingGraph {
     }
     return result;
   }
-}
 
-/// Small deterministic PRNG so layouts remain identical on all Dart platforms.
-final class _Random {
-  _Random(int seed) : _state = seed & 0xffffffff;
-  int _state;
+  List<({List<String> roots, List<String> leaves})> _findPackingComponents() {
+    final rootNodes = graph.childrenByParent[null]!;
+    final rootAdjacency = {for (final node in rootNodes) node.id: <String>{}};
+    for (final edge in edges) {
+      final source = compounds.childInOwner(edge.source, null);
+      final target = compounds.childInOwner(edge.target, null);
+      if (source == target) continue;
+      rootAdjacency[source]!.add(target);
+      rootAdjacency[target]!.add(source);
+    }
 
-  int _next() {
-    var value = _state;
-    value ^= value << 13;
-    value ^= value >>> 17;
-    value ^= value << 5;
-    _state = value & 0xffffffff;
-    return _state;
+    final unseen = rootAdjacency.keys.toSet();
+    final result = <({List<String> roots, List<String> leaves})>[];
+    while (unseen.isNotEmpty) {
+      final roots = <String>[];
+      final queue = Queue<String>()..add(unseen.first);
+      unseen.remove(queue.first);
+      while (queue.isNotEmpty) {
+        final current = queue.removeFirst();
+        roots.add(current);
+        for (final next in rootAdjacency[current]!) {
+          if (unseen.remove(next)) queue.add(next);
+        }
+      }
+      result.add((
+        roots: List.unmodifiable(roots),
+        leaves: List.unmodifiable([for (final root in roots) ...compounds.descendantLeaves(root)]),
+      ));
+    }
+    return List.unmodifiable(result);
   }
-
-  double nextDouble() => _next() / 0x100000000;
-  int nextInt(int maximum) => _next() % maximum;
 }

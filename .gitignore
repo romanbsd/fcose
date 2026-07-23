@@ -9,3 +9,4 @@ pubspec.lock
 # LLMs
 .codegraph/
 .codebase-memory/
+.serena/

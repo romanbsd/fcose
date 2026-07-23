@@ -4,6 +4,8 @@ enum LayoutQuality { draft, defaultQuality, proof }
 
 enum SamplingType { greedy, random }
 
+enum PackingUtility { adjustedFullness, weighted }
+
 /// Configuration corresponding to the public options of cytoscape-fcose 2.2.0.
 final class FcoseOptions {
   const FcoseOptions({
@@ -24,7 +26,11 @@ final class FcoseOptions {
     this.compoundGravityRange = 1.5,
     this.nestingFactor = 0.1,
     this.compoundPadding = 10,
-    this.componentSeparation = 60,
+    this.packComponents = true,
+    this.componentSeparation = 80,
+    this.desiredPackingAspectRatio = 1,
+    this.polyominoGridSizeFactor = 1,
+    this.packingUtility = PackingUtility.adjustedFullness,
     this.tile = true,
     this.tilingPaddingVertical = 10,
     this.tilingPaddingHorizontal = 10,
@@ -52,7 +58,19 @@ final class FcoseOptions {
   final double compoundGravityRange;
   final double nestingFactor;
   final double compoundPadding;
+
+  /// Enables layout-utilities-style packing of disconnected components.
+  final bool packComponents;
+
+  /// `componentSpacing` passed to the component packer, in logical pixels.
   final double componentSeparation;
+
+  /// Target width/height ratio for randomized polyomino packing.
+  final double desiredPackingAspectRatio;
+
+  /// Multiplier for the average-node-dimension polyomino grid size.
+  final double polyominoGridSizeFactor;
+  final PackingUtility packingUtility;
   final bool tile;
   final double tilingPaddingVertical;
   final double tilingPaddingHorizontal;

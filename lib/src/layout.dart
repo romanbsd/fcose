@@ -7,6 +7,7 @@ import 'constraints.dart';
 import 'geometry.dart';
 import 'model.dart';
 import 'options.dart';
+import 'packing.dart';
 import 'random.dart';
 import 'spectral.dart';
 
@@ -53,6 +54,9 @@ final class FcoseLayout {
 
     final random = Xorshift32(options.seed);
     var working = _WorkingGraph(graph);
+    final originalComponentCenters = _componentCenters(working, {
+      for (final leaf in working.leaves) leaf.id: leaf.position ?? Offset.zero,
+    });
     var positions = _initialPositions(working, random);
     final constraintHandler = _constraintHandler;
     if (options.randomize) {
@@ -82,6 +86,9 @@ final class FcoseLayout {
       iterations = _runSpringEmbedder(working, positions, constraintHandler, random);
     }
     if (!_hasConstraints && tiling == null) {
+      if (options.packComponents && working.packingComponents.length > 1) {
+        _relocateComponentsToOriginalCenters(working, positions, originalComponentCenters);
+      }
       _packComponents(working, positions);
     }
 
@@ -1006,9 +1013,61 @@ final class FcoseLayout {
       options.alignment.horizontal.isNotEmpty ||
       options.relativePlacements.isNotEmpty;
 
-  void _packComponents(_WorkingGraph graph, Map<String, Offset> positions) {
-    if (graph.packingComponents.length < 2 || options.fixedNodes.isNotEmpty) return;
+  List<Offset> _componentCenters(_WorkingGraph graph, Map<String, Offset> positions) {
     final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
+    return [
+      for (final component in graph.packingComponents)
+        component.roots.skip(1).fold(rectangles[component.roots.first]!, (bounds, root) {
+          return bounds.union(rectangles[root]!);
+        }).center,
+    ];
+  }
+
+  void _relocateComponentsToOriginalCenters(
+    _WorkingGraph graph,
+    Map<String, Offset> positions,
+    List<Offset> originalCenters,
+  ) {
+    final currentCenters = _componentCenters(graph, positions);
+    for (final (index, component) in graph.packingComponents.indexed) {
+      final shift = originalCenters[index] - currentCenters[index];
+      for (final id in component.leaves) {
+        positions[id] = positions[id]! + shift;
+      }
+    }
+  }
+
+  void _packComponents(_WorkingGraph graph, Map<String, Offset> positions) {
+    if (!options.packComponents || graph.packingComponents.length < 2 || options.fixedNodes.isNotEmpty) return;
+    final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
+    if (options.randomize) {
+      final packingInput = [
+        for (final component in graph.packingComponents)
+          PackingComponent(
+            nodes: [for (final id in component.nodes) rectangles[id]!],
+            edges: [
+              for (final edge in graph.edges)
+                if (component.nodes.contains(edge.source) && component.nodes.contains(edge.target))
+                  (start: rectangles[edge.source]!.center, end: rectangles[edge.target]!.center),
+            ],
+          ),
+      ];
+      final shifts = RandomizedComponentPacker(
+        componentSpacing: options.componentSeparation,
+        desiredAspectRatio: options.desiredPackingAspectRatio,
+        gridSizeFactor: options.polyominoGridSizeFactor,
+        utility: options.packingUtility,
+      ).pack(packingInput);
+      for (final (index, component) in graph.packingComponents.indexed) {
+        for (final id in component.leaves) {
+          positions[id] = positions[id]! + shifts[index];
+        }
+      }
+      return;
+    }
+
+    // The incremental POSE packer is a separate parity slice. Preserve the
+    // existing deterministic mental-map-aware fallback for randomize: false.
     final areas = <({List<String> ids, Rect bounds})>[];
     for (final component in graph.packingComponents) {
       var bounds = rectangles[component.roots.first]!;
@@ -1119,6 +1178,11 @@ final class FcoseLayout {
     }
     if (options.tilingPaddingHorizontal < 0 || options.tilingPaddingVertical < 0) {
       throw ArgumentError('tiling padding must not be negative');
+    }
+    if (options.componentSeparation < 0 ||
+        options.desiredPackingAspectRatio <= 0 ||
+        options.polyominoGridSizeFactor <= 0) {
+      throw ArgumentError('packing spacing must not be negative and packing ratios must be positive');
     }
     if (options.powerIterationTolerance <= 0) {
       throw ArgumentError.value(options.powerIterationTolerance, 'powerIterationTolerance', 'must be positive');
@@ -1326,7 +1390,7 @@ final class _WorkingGraph {
   late final List<FcoseEdge> edges;
   late final Map<String, Set<String>> adjacency;
   late final _SpectralGraph spectralGraph;
-  late final List<({List<String> roots, List<String> leaves})> packingComponents;
+  late final List<({List<String> roots, List<String> nodes, List<String> leaves})> packingComponents;
   final Map<String, String> _representatives = {};
 
   String representative(String id) => _representatives.putIfAbsent(id, () => compounds.spectralRepresentative(id));
@@ -1410,7 +1474,7 @@ final class _WorkingGraph {
     );
   }
 
-  List<({List<String> roots, List<String> leaves})> _findPackingComponents() {
+  List<({List<String> roots, List<String> nodes, List<String> leaves})> _findPackingComponents() {
     final rootNodes = graph.childrenByParent[null]!;
     final rootAdjacency = {for (final node in rootNodes) node.id: <String>{}};
     for (final edge in edges) {
@@ -1422,7 +1486,7 @@ final class _WorkingGraph {
     }
 
     final unseen = rootAdjacency.keys.toSet();
-    final result = <({List<String> roots, List<String> leaves})>[];
+    final result = <({List<String> roots, List<String> nodes, List<String> leaves})>[];
     while (unseen.isNotEmpty) {
       final roots = <String>[];
       final queue = Queue<String>()..add(unseen.first);
@@ -1434,8 +1498,12 @@ final class _WorkingGraph {
           if (unseen.remove(next)) queue.add(next);
         }
       }
+      final rootIds = roots.toSet();
       result.add((
         roots: List.unmodifiable(roots),
+        nodes: List.unmodifiable(
+          graph.nodes.where((node) => rootIds.contains(compounds.childInOwner(node.id, null))).map((node) => node.id),
+        ),
         leaves: List.unmodifiable([for (final root in roots) ...compounds.descendantLeaves(root)]),
       ));
     }

@@ -9,3 +9,5 @@
   upstream-compatible spectral dummy nodes.
 - Add CoSE-style randomized zero-degree grouping and bottom-up clearing and
   repopulation of fully tiled compound subtrees.
+- Add layout-utilities-compatible randomized polyomino component packing,
+  original-center relocation, and explicit typed packing controls.

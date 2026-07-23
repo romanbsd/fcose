@@ -97,31 +97,29 @@ final class FcoseLayout {
       }
       return {for (final node in graph.leaves) node.id: node.position!};
     }
-    final positions = <String, Offset>{};
-    for (final component in graph.components) {
-      final local = _spectralComponent(graph, component, random);
-      positions.addAll(local);
-    }
-    return positions;
+    return _spectralPositions(graph, random);
   }
 
   /// Landmark graph-distance embedding corresponding to fCoSE's spectral phase.
-  Map<String, Offset> _spectralComponent(_WorkingGraph graph, List<String> component, Xorshift32 random) {
-    return SpectralInitializer(
-          sampleSize: options.sampleSize,
-          samplingType: options.samplingType,
-          nodeSeparation: options.nodeSeparation,
-          tolerance: options.powerIterationTolerance,
-          seed: random.nextUint32() % 0x7fffffff,
-        )
-        .run(
-          component,
-          graph.adjacency,
-          widths: {for (final id in component) id: graph.graph.nodeById[id]!.width},
-          initialPositions: {for (final id in component) id: ?graph.graph.nodeById[id]!.position},
-          idealEdgeLength: options.idealEdgeLength,
-        )
-        .positions;
+  Map<String, Offset> _spectralPositions(_WorkingGraph graph, Xorshift32 random) {
+    final spectral = graph.spectralGraph;
+    final transformed =
+        SpectralInitializer(
+              sampleSize: options.sampleSize,
+              samplingType: options.samplingType,
+              nodeSeparation: options.nodeSeparation,
+              tolerance: options.powerIterationTolerance,
+              seed: random.nextUint32() % 0x7fffffff,
+            )
+            .run(
+              spectral.nodes,
+              spectral.adjacency,
+              widths: {for (final leaf in graph.leaves) leaf.id: leaf.width},
+              initialPositions: {for (final leaf in graph.leaves) leaf.id: ?leaf.position},
+              idealEdgeLength: options.idealEdgeLength,
+            )
+            .positions;
+    return {for (final leaf in graph.leaves) leaf.id: transformed[leaf.id]!};
   }
 
   ({FcoseEdge edge, double idealLength, double elasticity}) _springData(_WorkingGraph graph, FcoseEdge edge) {
@@ -1072,6 +1070,13 @@ final class _RootZeroDegreeTiling {
   final String dummyId;
 }
 
+final class _SpectralGraph {
+  const _SpectralGraph(this.nodes, this.adjacency);
+
+  final List<String> nodes;
+  final Map<String, Set<String>> adjacency;
+}
+
 final class _WorkingGraph {
   _WorkingGraph(this.graph)
     : nodeById = graph.nodeById,
@@ -1095,7 +1100,7 @@ final class _WorkingGraph {
         adjacency[target]!.add(source);
       }
     }
-    components = _findComponents();
+    spectralGraph = _buildSpectralGraph();
     packingComponents = _findPackingComponents();
   }
 
@@ -1105,30 +1110,89 @@ final class _WorkingGraph {
   final List<FcoseNode> leaves;
   late final List<FcoseEdge> edges;
   late final Map<String, Set<String>> adjacency;
-  late final List<List<String>> components;
+  late final _SpectralGraph spectralGraph;
   late final List<({List<String> roots, List<String> leaves})> packingComponents;
   final Map<String, String> _representatives = {};
 
   String representative(String id) => _representatives.putIfAbsent(id, () => compounds.spectralRepresentative(id));
 
-  List<List<String>> _findComponents() {
-    final unseen = adjacency.keys.toSet();
-    final result = <List<String>>[];
-    while (unseen.isNotEmpty) {
-      final first = unseen.first;
-      final component = <String>[];
-      final queue = Queue<String>()..add(first);
-      unseen.remove(first);
-      while (queue.isNotEmpty) {
-        final current = queue.removeFirst();
-        component.add(current);
-        for (final next in adjacency[current]!) {
-          if (unseen.remove(next)) queue.add(next);
-        }
+  _SpectralGraph _buildSpectralGraph() {
+    final transformedAdjacency = {for (final entry in adjacency.entries) entry.key: entry.value.toSet()};
+    final transformedNodes = leaves.map((node) => node.id).toList();
+    final incidentEdgeCounts = {for (final node in graph.nodes) node.id: 0};
+    for (final edge in graph.edges) {
+      incidentEdgeCounts[edge.source] = incidentEdgeCounts[edge.source]! + 1;
+      if (edge.target != edge.source) {
+        incidentEdgeCounts[edge.target] = incidentEdgeCounts[edge.target]! + 1;
       }
-      result.add(component);
     }
-    return result;
+
+    var dummyIndex = 1;
+    for (final ownerId in <String?>[
+      null,
+      ...graph.nodes.where((node) => compounds.isCompound(node.id)).map((node) => node.id),
+    ]) {
+      final directChildren = graph.childrenByParent[ownerId] ?? const [];
+      if (directChildren.length < 2) continue;
+      final directIds = directChildren.map((node) => node.id).toSet();
+
+      String? directChildOf(String nodeId) {
+        var current = nodeId;
+        while (!directIds.contains(current)) {
+          final parent = graph.nodeById[current]?.parentId;
+          if (parent == null || parent == ownerId) return null;
+          current = parent;
+        }
+        return current;
+      }
+
+      final ownerAdjacency = {for (final child in directChildren) child.id: <String>{}};
+      for (final edge in graph.edges) {
+        final source = directChildOf(edge.source);
+        final target = directChildOf(edge.target);
+        if (source == null || target == null || source == target) continue;
+        ownerAdjacency[source]!.add(target);
+        ownerAdjacency[target]!.add(source);
+      }
+
+      final unseen = directIds.toSet();
+      final representatives = <String>[];
+      while (unseen.isNotEmpty) {
+        final component = <String>[];
+        final queue = Queue<String>()..add(unseen.first);
+        unseen.remove(queue.first);
+        while (queue.isNotEmpty) {
+          final current = queue.removeFirst();
+          component.add(current);
+          for (final neighbor in ownerAdjacency[current]!) {
+            if (unseen.remove(neighbor)) queue.add(neighbor);
+          }
+        }
+        var selected = component.first;
+        for (final candidate in component.skip(1)) {
+          if (incidentEdgeCounts[candidate]! < incidentEdgeCounts[selected]!) {
+            selected = candidate;
+          }
+        }
+        representatives.add(representative(selected));
+      }
+      if (representatives.length < 2) continue;
+
+      var dummyId = '\u0000fcose-dummy-${dummyIndex++}';
+      while (transformedAdjacency.containsKey(dummyId) || graph.nodeById.containsKey(dummyId)) {
+        dummyId = '\u0000fcose-dummy-${dummyIndex++}';
+      }
+      transformedNodes.add(dummyId);
+      transformedAdjacency[dummyId] = representatives.toSet();
+      for (final representativeId in representatives) {
+        transformedAdjacency[representativeId]!.add(dummyId);
+      }
+    }
+
+    return _SpectralGraph(
+      List.unmodifiable(transformedNodes),
+      Map.unmodifiable({for (final entry in transformedAdjacency.entries) entry.key: Set.unmodifiable(entry.value)}),
+    );
   }
 
   List<({List<String> roots, List<String> leaves})> _findPackingComponents() {

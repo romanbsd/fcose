@@ -5,3 +5,5 @@
 - Add compound nodes, disconnected component packing, and placement constraints.
 - Add CoSE leaf reduction, staged tree regrowth, sparse-side placement, and
   post-growth cooling.
+- Connect disconnected root and nested compound child components through
+  upstream-compatible spectral dummy nodes.

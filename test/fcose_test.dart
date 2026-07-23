@@ -1112,6 +1112,85 @@ void main() {
       expect(result.positions.values.every((position) => position.isFinite), isTrue);
     });
 
+    test('spectrally connects disconnected child components inside a compound', () {
+      final result = FcoseLayout(options: const FcoseOptions(quality: LayoutQuality.draft, seed: 7, tile: false)).run(
+        FcoseGraph(
+          nodes: const [
+            FcoseNode(id: 'parent'),
+            FcoseNode(id: 'a', parentId: 'parent'),
+            FcoseNode(id: 'b', parentId: 'parent'),
+            FcoseNode(id: 'c', parentId: 'parent'),
+            FcoseNode(id: 'd', parentId: 'parent'),
+          ],
+          edges: const [
+            FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+            FcoseEdge(id: 'cd', source: 'c', target: 'd'),
+          ],
+        ),
+      );
+
+      expect(result.rectOf('a').overlaps(result.rectOf('c')), isFalse);
+      expect(result.rectOf('b').overlaps(result.rectOf('d')), isFalse);
+      expect(result.rectOf('parent').containsRect(result.rectOf('a')), isTrue);
+      expect(result.rectOf('parent').containsRect(result.rectOf('d')), isTrue);
+      expect(result.positionOf('a').x, closeTo(74.99949050629539, 1e-3));
+      expect(result.positionOf('a').y, closeTo(-3.6617906982385136, 1e-3));
+      expect(result.positionOf('b').x, closeTo(149.99898099979958, 1e-3));
+      expect(result.positionOf('b').y, closeTo(7.323581134492621, 1e-3));
+      expect(result.positionOf('c').x, closeTo(-74.99949049989979, 1e-3));
+      expect(result.positionOf('c').y, closeTo(-3.661790567246443, 1e-3));
+      expect(result.positionOf('d').x, closeTo(-149.99898101259078, 1e-3));
+      expect(result.positionOf('d').y, closeTo(7.323581396477027, 1e-3));
+    });
+
+    test('uses one root spectral graph for disconnected top-level components', () {
+      final result = FcoseLayout(options: const FcoseOptions(quality: LayoutQuality.draft, seed: 7, tile: false)).run(
+        FcoseGraph(
+          nodes: const [
+            FcoseNode(id: 'a'),
+            FcoseNode(id: 'b'),
+            FcoseNode(id: 'c'),
+            FcoseNode(id: 'd'),
+          ],
+          edges: const [
+            FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+            FcoseEdge(id: 'cd', source: 'c', target: 'd'),
+          ],
+        ),
+      );
+
+      final firstEdge = result.positionOf('b') - result.positionOf('a');
+      final secondEdge = result.positionOf('d') - result.positionOf('c');
+      expect(firstEdge.x, closeTo(74.99949049350419, 1e-3));
+      expect(firstEdge.y, closeTo(10.985371832731135, 1e-3));
+      expect(secondEdge.x, closeTo(-74.999490512691, 1e-3));
+      expect(secondEdge.y, closeTo(10.98537196372347, 1e-3));
+    });
+
+    test('stacks owner-level dummy connections through nested compounds', () {
+      final result = FcoseLayout(options: const FcoseOptions(quality: LayoutQuality.draft, seed: 7, tile: false)).run(
+        FcoseGraph(
+          nodes: const [
+            FcoseNode(id: 'outer'),
+            FcoseNode(id: 'left', parentId: 'outer'),
+            FcoseNode(id: 'busy', parentId: 'left'),
+            FcoseNode(id: 'quiet', parentId: 'left'),
+            FcoseNode(id: 'standalone', parentId: 'outer'),
+          ],
+          edges: const [FcoseEdge(id: 'loop', source: 'busy', target: 'busy')],
+        ),
+      );
+
+      expect(result.positionOf('busy').x, closeTo(149.99898100220673, 1e-3));
+      expect(result.positionOf('busy').y.abs(), closeTo(7.323581183794171, 1e-3));
+      expect(result.positionOf('quiet').x, closeTo(3.988496461483881e-9, 1e-3));
+      expect(result.positionOf('quiet').y.abs(), closeTo(7.323581265484937, 1e-3));
+      expect(result.positionOf('standalone').x, closeTo(-149.99898101018374, 1e-3));
+      expect(result.positionOf('standalone').y.abs(), closeTo(7.323581347175437, 1e-3));
+      expect(result.rectOf('left').containsRect(result.rectOf('busy')), isTrue);
+      expect(result.rectOf('outer').containsRect(result.rectOf('standalone')), isTrue);
+    });
+
     test('preserves supplied geometry when randomization is disabled', () {
       final graph = FcoseGraph(
         nodes: const [

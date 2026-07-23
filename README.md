@@ -60,7 +60,8 @@ distances.
 ## Implemented foundations
 
 - validated undirected compound graph model;
-- sampled deterministic spectral initialization;
+- sampled deterministic spectral initialization with root and nested-owner
+  dummy connections for disconnected child components;
 - rectangle-clipped CoSE springs and overlap separation;
 - per-node repulsion, gravity, cooling, and convergence;
 - same-owner leaf reduction, ten-tick staged regrowth, and post-growth
@@ -79,8 +80,6 @@ distances.
 
 The largest known differences from cytoscape-fcose 2.2.0 are:
 
-- spectral dummy-node connections between disconnected top-level and nested
-  compound components;
 - randomized zero-degree grouping and nested-owner compound
   clear/repopulate tiling;
 - exact layout-utilities component packing and original-center relocation;

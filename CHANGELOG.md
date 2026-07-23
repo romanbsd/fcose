@@ -11,3 +11,5 @@
   repopulation of fully tiled compound subtrees.
 - Add layout-utilities-compatible randomized polyomino component packing,
   original-center relocation, and explicit typed packing controls.
+- Add layout-utilities-compatible incremental POSE component packing for
+  `randomize: false`.

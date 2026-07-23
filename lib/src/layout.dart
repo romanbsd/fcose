@@ -8,6 +8,7 @@ import 'geometry.dart';
 import 'model.dart';
 import 'options.dart';
 import 'packing.dart';
+import 'pose_packing.dart';
 import 'random.dart';
 import 'spectral.dart';
 
@@ -1040,60 +1041,29 @@ final class FcoseLayout {
   void _packComponents(_WorkingGraph graph, Map<String, Offset> positions) {
     if (!options.packComponents || graph.packingComponents.length < 2 || options.fixedNodes.isNotEmpty) return;
     final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
-    if (options.randomize) {
-      final packingInput = [
-        for (final component in graph.packingComponents)
-          PackingComponent(
-            nodes: [for (final id in component.nodes) rectangles[id]!],
-            edges: [
-              for (final edge in graph.edges)
-                if (component.nodes.contains(edge.source) && component.nodes.contains(edge.target))
-                  (start: rectangles[edge.source]!.center, end: rectangles[edge.target]!.center),
-            ],
-          ),
-      ];
-      final shifts = RandomizedComponentPacker(
-        componentSpacing: options.componentSeparation,
-        desiredAspectRatio: options.desiredPackingAspectRatio,
-        gridSizeFactor: options.polyominoGridSizeFactor,
-        utility: options.packingUtility,
-      ).pack(packingInput);
-      for (final (index, component) in graph.packingComponents.indexed) {
-        for (final id in component.leaves) {
-          positions[id] = positions[id]! + shifts[index];
-        }
+    final packingInput = [
+      for (final component in graph.packingComponents)
+        PackingComponent(
+          nodes: [for (final id in component.nodes) rectangles[id]!],
+          edges: [
+            for (final edge in graph.edges)
+              if (component.nodes.contains(edge.source) && component.nodes.contains(edge.target))
+                (start: rectangles[edge.source]!.center, end: rectangles[edge.target]!.center),
+          ],
+        ),
+    ];
+    final shifts = options.randomize
+        ? RandomizedComponentPacker(
+            componentSpacing: options.componentSeparation,
+            desiredAspectRatio: options.desiredPackingAspectRatio,
+            gridSizeFactor: options.polyominoGridSizeFactor,
+            utility: options.packingUtility,
+          ).pack(packingInput)
+        : IncrementalComponentPacker(componentSpacing: options.componentSeparation).pack(packingInput);
+    for (final (index, component) in graph.packingComponents.indexed) {
+      for (final id in component.leaves) {
+        positions[id] = positions[id]! + shifts[index];
       }
-      return;
-    }
-
-    // The incremental POSE packer is a separate parity slice. Preserve the
-    // existing deterministic mental-map-aware fallback for randomize: false.
-    final areas = <({List<String> ids, Rect bounds})>[];
-    for (final component in graph.packingComponents) {
-      var bounds = rectangles[component.roots.first]!;
-      for (final root in component.roots.skip(1)) {
-        bounds = bounds.union(rectangles[root]!);
-      }
-      areas.add((ids: component.leaves, bounds: bounds));
-    }
-    areas.sort((a, b) => b.bounds.height.compareTo(a.bounds.height));
-    final totalArea = areas.fold(0.0, (sum, area) => sum + area.bounds.width * area.bounds.height);
-    final rowLimit = math.max(math.sqrt(totalArea) * 1.5, areas.first.bounds.width);
-    var cursorX = 0.0;
-    var cursorY = 0.0;
-    var rowHeight = 0.0;
-    for (final area in areas) {
-      if (cursorX > 0 && cursorX + area.bounds.width > rowLimit) {
-        cursorX = 0;
-        cursorY += rowHeight + options.componentSeparation;
-        rowHeight = 0;
-      }
-      final shift = Offset(cursorX - area.bounds.left, cursorY - area.bounds.top);
-      for (final id in area.ids) {
-        positions[id] = positions[id]! + shift;
-      }
-      cursorX += area.bounds.width + options.componentSeparation;
-      rowHeight = math.max(rowHeight, area.bounds.height);
     }
   }
 

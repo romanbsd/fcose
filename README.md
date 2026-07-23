@@ -67,8 +67,9 @@ distances.
 - same-owner leaf reduction, ten-tick staged regrowth, and post-growth
   convergence/cooling;
 - live compound-node forces, nesting-aware edge lengths, and compound gravity;
-- disconnected-component detection, original-center relocation, and
-  layout-utilities-compatible randomized polyomino packing;
+- disconnected-component detection, original-center relocation,
+  layout-utilities-compatible randomized polyomino packing, and incremental
+  POSE packing;
 - area-ordered zero-degree tiling with randomized sibling grouping and
   bottom-up nested-compound clearing/repopulation;
 - bottom-up compound bounds with padding and label geometry;
@@ -82,7 +83,6 @@ distances.
 
 The largest known differences from cytoscape-fcose 2.2.0 are:
 
-- exact incremental POSE component packing for `randomize: false`;
 - remaining general option semantics such as uniform leaf dimensions,
   configurable tiling comparison, tiling interactions with placement
   constraints, and debug steps.

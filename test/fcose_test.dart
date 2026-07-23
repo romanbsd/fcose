@@ -695,6 +695,99 @@ void main() {
       expect(result.boundsOf({'a', 'b'}).overlaps(result.boundsOf({'x', 'y'})), isFalse);
     });
 
+    test('matches upstream tiling for flat zero-degree nodes', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 2,
+              tile: true,
+              tilingPaddingHorizontal: 10,
+              tilingPaddingVertical: 10,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80, position: Offset(50, 50)),
+                FcoseNode(id: 'b', width: 80, height: 80, position: Offset(150, 50)),
+                FcoseNode(id: 'c', width: 80, height: 80, position: Offset(50, 150)),
+                FcoseNode(id: 'd', width: 80, height: 80, position: Offset(150, 150)),
+              ],
+            ),
+          );
+
+      expect(result.iterations, 5);
+      expect(result.positionOf('a'), const Offset(55, 55));
+      expect(result.positionOf('b'), const Offset(145, 55));
+      expect(result.positionOf('c'), const Offset(55, 145));
+      expect(result.positionOf('d'), const Offset(145, 145));
+    });
+
+    test('matches upstream area-ordered tiling for mixed node sizes', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(quality: LayoutQuality.proof, randomize: false, maxIterations: 2, tile: true),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 40, position: Offset(50, 50)),
+                FcoseNode(id: 'b', width: 40, height: 80, position: Offset(150, 50)),
+                FcoseNode(id: 'c', width: 60, height: 60, position: Offset(50, 150)),
+                FcoseNode(id: 'd', width: 100, height: 30, position: Offset(150, 150)),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('a'), const Offset(140, 40));
+      expect(result.positionOf('b'), const Offset(50, 130));
+      expect(result.positionOf('c'), const Offset(60, 50));
+      expect(result.positionOf('d'), const Offset(130, 105));
+    });
+
+    test('matches upstream zero-degree dummy compound in a mixed root graph', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 10,
+              tile: true,
+              idealEdgeLength: 120,
+              edgeElasticity: 0.45,
+              nodeRepulsion: 4500,
+              gravity: 0.25,
+              gravityRange: 3.8,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80, position: Offset(50, 50)),
+                FcoseNode(id: 'b', width: 80, height: 80, position: Offset(250, 50)),
+                FcoseNode(id: 'e', width: 80, height: 80, position: Offset(150, 150)),
+                FcoseNode(id: 'c', width: 80, height: 80, position: Offset(50, 250)),
+                FcoseNode(id: 'd', width: 80, height: 80, position: Offset(150, 250)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'be', source: 'b', target: 'e'),
+                FcoseEdge(id: 'ea', source: 'e', target: 'a'),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('a').x, closeTo(67.01003008210519, 1e-9));
+      expect(result.positionOf('a').y, closeTo(20.887744650386477, 1e-9));
+      expect(result.positionOf('b').x, closeTo(268.80964560030645, 1e-9));
+      expect(result.positionOf('b').y, closeTo(6.062370762764665, 1e-9));
+      expect(result.positionOf('e').x, closeTo(201.79459405917498, 1e-9));
+      expect(result.positionOf('e').y, closeTo(196.914018004143, 1e-9));
+      expect(result.positionOf('c').x, closeTo(31.190354399693568, 1e-9));
+      expect(result.positionOf('c').y, closeTo(293.93762923723534, 1e-9));
+      expect(result.positionOf('d').x, closeTo(121.19035439969358, 1e-9));
+      expect(result.positionOf('d').y, closeTo(293.93762923723534, 1e-9));
+    });
+
     test('computes compound bounds around descendants', () {
       final graph = FcoseGraph(
         nodes: const [
@@ -943,10 +1036,10 @@ void main() {
                 FcoseNode(id: 'api'),
                 FcoseNode(id: 'public', parentId: 'api'),
                 FcoseNode(id: 'private', parentId: 'api'),
-                FcoseNode(id: 'serv1', parentId: 'public', width: 80, height: 80, position: Offset(45, 45)),
-                FcoseNode(id: 'serv2', parentId: 'private', width: 80, height: 80, position: Offset(135, 45)),
-                FcoseNode(id: 'db', parentId: 'private', width: 80, height: 80, position: Offset(45, 135)),
-                FcoseNode(id: 'gateway', parentId: 'api', width: 80, height: 80, position: Offset(135, 135)),
+                FcoseNode(id: 'serv1', parentId: 'public', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'serv2', parentId: 'private', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'db', parentId: 'private', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'gateway', parentId: 'api', width: 80, height: 80, position: Offset.zero),
               ],
               edges: const [
                 FcoseEdge(id: 'serv1-serv2', source: 'serv1', target: 'serv2'),
@@ -983,8 +1076,516 @@ void main() {
           result.positionOf('serv2').x - result.positionOf('db').x,
           result.positionOf('serv1').x - result.positionOf('gateway').x,
         ],
-        [closeTo(255.17247257587814, 0.75), closeTo(201.29653714581747, 0.75), closeTo(222.65023530391295, 0.75)],
+        [closeTo(255.17247257587814, 1e-9), closeTo(201.29653714581747, 1e-9), closeTo(222.65023530391295, 1e-9)],
       );
+    });
+
+    test('Mermaid adapter matches seeded randomized architecture passes', () {
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+            randomize: true,
+            seed: 1,
+          ).configureArchitecture(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80),
+                FcoseNode(id: 'b', width: 80, height: 80),
+                FcoseNode(id: 'c', width: 80, height: 80),
+              ],
+              edges: const [
+                FcoseEdge(id: 'a-b', source: 'a', target: 'b'),
+                FcoseEdge(id: 'b-c', source: 'b', target: 'c'),
+              ],
+            ),
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'a',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'b',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'b',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'c',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+            ],
+          );
+
+      final result = configuration.runMermaidArchitecture();
+
+      expect(result.positionOf('a').x, closeTo(-200.68652784647549, 5e-5));
+      expect(result.positionOf('b').x, closeTo(0, 5e-5));
+      expect(result.positionOf('c').x, closeTo(200.68652784647549, 5e-5));
+      expect([
+        result.positionOf('a').y,
+        result.positionOf('b').y,
+        result.positionOf('c').y,
+      ], everyElement(closeTo(0, 1e-9)));
+    });
+
+    test('Mermaid adapter matches upstream mixed-axis architecture geometry', () {
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+          ).configureArchitecture(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'db', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 's3', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'serv1', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'serv2', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'disk', width: 80, height: 80, position: Offset.zero),
+              ],
+              edges: const [
+                FcoseEdge(id: 'db-s3', source: 'db', target: 's3'),
+                FcoseEdge(id: 'serv1-s3', source: 'serv1', target: 's3'),
+                FcoseEdge(id: 'serv2-s3', source: 'serv2', target: 's3'),
+                FcoseEdge(id: 'serv1-disk', source: 'serv1', target: 'disk'),
+              ],
+            ),
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'db',
+                sourceDirection: MermaidArchitectureDirection.left,
+                target: 's3',
+                targetDirection: MermaidArchitectureDirection.right,
+              ),
+              MermaidDirectionalEdge(
+                source: 'serv1',
+                sourceDirection: MermaidArchitectureDirection.left,
+                target: 's3',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'serv2',
+                sourceDirection: MermaidArchitectureDirection.left,
+                target: 's3',
+                targetDirection: MermaidArchitectureDirection.bottom,
+              ),
+              MermaidDirectionalEdge(
+                source: 'serv1',
+                sourceDirection: MermaidArchitectureDirection.top,
+                target: 'disk',
+                targetDirection: MermaidArchitectureDirection.bottom,
+              ),
+            ],
+          );
+
+      final result = configuration.runMermaidArchitecture();
+
+      expect(result.positionOf('db').x - result.positionOf('s3').x, closeTo(186.83865249837297, 1e-9));
+      expect(result.positionOf('s3').y - result.positionOf('serv1').y, closeTo(126.62426221746131, 1e-9));
+      expect(result.positionOf('serv2').y - result.positionOf('s3').y, closeTo(126.79396513402435, 1e-9));
+      expect(result.positionOf('serv1').y - result.positionOf('disk').y, closeTo(200.58493229670734, 1e-9));
+    });
+
+    test('Mermaid adapter matches upstream dense directional mesh', () {
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+          ).configureArchitecture(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'center', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'left', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'right', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'top', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'bottom', width: 80, height: 80, position: Offset.zero),
+              ],
+              edges: const [
+                FcoseEdge(id: 'center-left', source: 'center', target: 'left'),
+                FcoseEdge(id: 'center-right', source: 'center', target: 'right'),
+                FcoseEdge(id: 'center-top', source: 'center', target: 'top'),
+                FcoseEdge(id: 'center-bottom', source: 'center', target: 'bottom'),
+                FcoseEdge(id: 'left-top', source: 'left', target: 'top'),
+                FcoseEdge(id: 'left-bottom', source: 'left', target: 'bottom'),
+                FcoseEdge(id: 'right-top', source: 'right', target: 'top'),
+                FcoseEdge(id: 'right-bottom', source: 'right', target: 'bottom'),
+              ],
+            ),
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'center',
+                sourceDirection: MermaidArchitectureDirection.left,
+                target: 'left',
+                targetDirection: MermaidArchitectureDirection.right,
+              ),
+              MermaidDirectionalEdge(
+                source: 'center',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'right',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'center',
+                sourceDirection: MermaidArchitectureDirection.top,
+                target: 'top',
+                targetDirection: MermaidArchitectureDirection.bottom,
+              ),
+              MermaidDirectionalEdge(
+                source: 'center',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'bottom',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'left',
+                sourceDirection: MermaidArchitectureDirection.top,
+                target: 'top',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'left',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'bottom',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'right',
+                sourceDirection: MermaidArchitectureDirection.top,
+                target: 'top',
+                targetDirection: MermaidArchitectureDirection.right,
+              ),
+              MermaidDirectionalEdge(
+                source: 'right',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'bottom',
+                targetDirection: MermaidArchitectureDirection.right,
+              ),
+            ],
+          );
+
+      final result = configuration.runMermaidArchitecture();
+
+      expect(result.positionOf('center').x - result.positionOf('left').x, closeTo(177.17119140792983, 1e-9));
+      expect(result.positionOf('right').x - result.positionOf('center').x, closeTo(177.17119140792983, 1e-9));
+      expect(result.positionOf('center').y - result.positionOf('top').y, closeTo(177.17119140792983, 1e-9));
+      expect(result.positionOf('bottom').y - result.positionOf('center').y, closeTo(177.17119140792983, 1e-9));
+    });
+
+    test('Mermaid adapter matches upstream ungrouped junction pair', () {
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+          ).configureArchitecture(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'left-disk', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'top-disk', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'bottom-disk', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'top-gateway', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'bottom-gateway', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'junction-center', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'junction-right', width: 80, height: 80, position: Offset.zero),
+              ],
+              edges: const [
+                FcoseEdge(id: 'left-center', source: 'left-disk', target: 'junction-center'),
+                FcoseEdge(id: 'top-center', source: 'top-disk', target: 'junction-center'),
+                FcoseEdge(id: 'bottom-center', source: 'bottom-disk', target: 'junction-center'),
+                FcoseEdge(id: 'center-right', source: 'junction-center', target: 'junction-right'),
+                FcoseEdge(id: 'top-right', source: 'top-gateway', target: 'junction-right'),
+                FcoseEdge(id: 'bottom-right', source: 'bottom-gateway', target: 'junction-right'),
+              ],
+            ),
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'left-disk',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'junction-center',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'top-disk',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'junction-center',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'bottom-disk',
+                sourceDirection: MermaidArchitectureDirection.top,
+                target: 'junction-center',
+                targetDirection: MermaidArchitectureDirection.bottom,
+              ),
+              MermaidDirectionalEdge(
+                source: 'junction-center',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'junction-right',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'top-gateway',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'junction-right',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'bottom-gateway',
+                sourceDirection: MermaidArchitectureDirection.top,
+                target: 'junction-right',
+                targetDirection: MermaidArchitectureDirection.bottom,
+              ),
+            ],
+          );
+
+      final result = configuration.runMermaidArchitecture();
+
+      expect(
+        result.positionOf('junction-center').x - result.positionOf('left-disk').x,
+        closeTo(201.1439111544484, 1e-9),
+      );
+      expect(
+        result.positionOf('junction-center').y - result.positionOf('top-disk').y,
+        closeTo(201.03841103516397, 1e-9),
+      );
+      expect(
+        result.positionOf('bottom-disk').y - result.positionOf('junction-center').y,
+        closeTo(201.038411035164, 1e-9),
+      );
+      expect(
+        result.positionOf('junction-right').x - result.positionOf('junction-center').x,
+        closeTo(202.88904602032396, 1e-9),
+      );
+      expect(
+        result.positionOf('junction-right').y - result.positionOf('top-gateway').y,
+        closeTo(201.03841103516397, 1e-9),
+      );
+      expect(
+        result.positionOf('bottom-gateway').y - result.positionOf('junction-right').y,
+        closeTo(201.038411035164, 1e-9),
+      );
+    });
+
+    test('Mermaid adapter matches upstream compound alignment grid', () {
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+          ).configureArchitecture(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'tier-1'),
+                FcoseNode(id: 'a1', width: 80, height: 80, parentId: 'tier-1', position: Offset.zero),
+                FcoseNode(id: 'a2', width: 80, height: 80, parentId: 'tier-1', position: Offset.zero),
+                FcoseNode(id: 'a3', width: 80, height: 80, parentId: 'tier-1', position: Offset.zero),
+                FcoseNode(id: 'tier-2'),
+                FcoseNode(id: 'b1', width: 80, height: 80, parentId: 'tier-2', position: Offset.zero),
+                FcoseNode(id: 'b2', width: 80, height: 80, parentId: 'tier-2', position: Offset.zero),
+                FcoseNode(id: 'b3', width: 80, height: 80, parentId: 'tier-2', position: Offset.zero),
+              ],
+              edges: const [
+                FcoseEdge(id: 'a1-b1', source: 'a1', target: 'b1'),
+                FcoseEdge(id: 'a2-b2', source: 'a2', target: 'b2'),
+                FcoseEdge(id: 'a3-b3', source: 'a3', target: 'b3'),
+              ],
+            ),
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'a1',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'b1',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'a2',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'b2',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'a3',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'b3',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+            ],
+            layoutHints: const [
+              MermaidAlignmentHint(MermaidAlignmentDirection.row, ['a1', 'a2', 'a3']),
+              MermaidAlignmentHint(MermaidAlignmentDirection.row, ['b1', 'b2', 'b3']),
+              MermaidAlignmentHint(MermaidAlignmentDirection.column, ['a1', 'b1']),
+              MermaidAlignmentHint(MermaidAlignmentDirection.column, ['a2', 'b2']),
+              MermaidAlignmentHint(MermaidAlignmentDirection.column, ['a3', 'b3']),
+            ],
+          );
+
+      final result = configuration.runMermaidArchitecture();
+
+      expect(result.positionOf('a1').y, closeTo(result.positionOf('a2').y, 1e-9));
+      expect(result.positionOf('a2').y, closeTo(result.positionOf('a3').y, 1e-9));
+      expect(result.positionOf('b1').y, closeTo(result.positionOf('b2').y, 1e-9));
+      expect(result.positionOf('b2').y, closeTo(result.positionOf('b3').y, 1e-9));
+      expect(result.positionOf('a1').x, closeTo(result.positionOf('b1').x, 1e-9));
+      expect(result.positionOf('a2').x, closeTo(result.positionOf('b2').x, 1e-9));
+      expect(result.positionOf('a3').x, closeTo(result.positionOf('b3').x, 1e-9));
+      expect(result.positionOf('a2').x - result.positionOf('a1').x, closeTo(157.62032405276386, 1e-9));
+      expect(result.positionOf('b1').y - result.positionOf('a1').y, closeTo(250.87339226640756, 1e-9));
+    });
+
+    test('Mermaid adapter matches upstream sibling group boundary directions', () {
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+          ).configureArchitecture(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'left-group'),
+                FcoseNode(id: 'left', width: 80, height: 80, parentId: 'left-group', position: Offset.zero),
+                FcoseNode(id: 'right-group'),
+                FcoseNode(id: 'right', width: 80, height: 80, parentId: 'right-group', position: Offset.zero),
+                FcoseNode(id: 'top-group'),
+                FcoseNode(id: 'top', width: 80, height: 80, parentId: 'top-group', position: Offset.zero),
+                FcoseNode(id: 'bottom-group'),
+                FcoseNode(id: 'bottom', width: 80, height: 80, parentId: 'bottom-group', position: Offset.zero),
+                FcoseNode(id: 'center-group'),
+                FcoseNode(id: 'center', width: 80, height: 80, parentId: 'center-group', position: Offset.zero),
+              ],
+              edges: const [
+                FcoseEdge(id: 'left-center', source: 'left', target: 'center'),
+                FcoseEdge(id: 'right-center', source: 'right', target: 'center'),
+                FcoseEdge(id: 'top-center', source: 'top', target: 'center'),
+                FcoseEdge(id: 'bottom-center', source: 'bottom', target: 'center'),
+              ],
+            ),
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'left',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'center',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'right',
+                sourceDirection: MermaidArchitectureDirection.left,
+                target: 'center',
+                targetDirection: MermaidArchitectureDirection.right,
+              ),
+              MermaidDirectionalEdge(
+                source: 'top',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'center',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'bottom',
+                sourceDirection: MermaidArchitectureDirection.top,
+                target: 'center',
+                targetDirection: MermaidArchitectureDirection.bottom,
+              ),
+            ],
+          );
+
+      final result = configuration.runMermaidArchitecture();
+
+      expect(result.positionOf('center').x - result.positionOf('left').x, closeTo(242.9767601208352, 1e-9));
+      expect(result.positionOf('right').x - result.positionOf('center').x, closeTo(241.3602280180233, 1e-9));
+      expect(result.positionOf('center').y - result.positionOf('top').y, closeTo(242.97676012083514, 1e-9));
+      expect(result.positionOf('bottom').y - result.positionOf('center').y, closeTo(241.36022801802325, 1e-9));
+    });
+
+    test('Mermaid adapter matches upstream cross-group junction spine', () {
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+          ).configureArchitecture(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'companion'),
+                FcoseNode(id: 'hub'),
+                FcoseNode(id: 'first', width: 80, height: 80, parentId: 'companion', position: Offset.zero),
+                FcoseNode(id: 'second', width: 80, height: 80, parentId: 'companion', position: Offset.zero),
+                FcoseNode(id: 'firewall', width: 80, height: 80, parentId: 'hub', position: Offset.zero),
+                FcoseNode(id: 'server', width: 80, height: 80, parentId: 'hub', position: Offset.zero),
+                FcoseNode(id: 'db1', width: 80, height: 80, parentId: 'hub', position: Offset.zero),
+                FcoseNode(id: 'db2', width: 80, height: 80, parentId: 'hub', position: Offset.zero),
+                FcoseNode(id: 'mid', width: 80, height: 80, parentId: 'hub', position: Offset.zero),
+                FcoseNode(id: 'left', width: 80, height: 80, parentId: 'hub', position: Offset.zero),
+                FcoseNode(id: 'right', width: 80, height: 80, parentId: 'hub', position: Offset.zero),
+              ],
+              edges: const [
+                FcoseEdge(id: 'first-second', source: 'first', target: 'second'),
+                FcoseEdge(id: 'firewall-server', source: 'firewall', target: 'server'),
+                FcoseEdge(id: 'server-mid', source: 'server', target: 'mid'),
+                FcoseEdge(id: 'left-mid', source: 'left', target: 'mid'),
+                FcoseEdge(id: 'left-db1', source: 'left', target: 'db1'),
+                FcoseEdge(id: 'mid-right', source: 'mid', target: 'right'),
+                FcoseEdge(id: 'right-db2', source: 'right', target: 'db2'),
+                FcoseEdge(id: 'second-firewall', source: 'second', target: 'firewall'),
+              ],
+            ),
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'first',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'second',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'firewall',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'server',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'server',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'mid',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'left',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'mid',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'left',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'db1',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'mid',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'right',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'right',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'db2',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'second',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'firewall',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+            ],
+          );
+
+      final result = configuration.runMermaidArchitecture();
+
+      expect(result.positionOf('mid').x - result.positionOf('left').x, closeTo(200.96282671581838, 1e-9));
+      expect(result.positionOf('right').x - result.positionOf('mid').x, closeTo(201.05432785116807, 1e-9));
+      expect(result.positionOf('db1').y - result.positionOf('left').y, closeTo(201.3112640602592, 1e-9));
+      expect(result.positionOf('mid').y - result.positionOf('server').y, closeTo(203.8824241917174, 1e-9));
+      expect(result.rectOf('hub').left - result.rectOf('companion').right, closeTo(135.75992035488161, 1e-9));
     });
 
     test('Mermaid adapter matches upstream deep Azure two-pass layout', () {
@@ -1137,13 +1738,15 @@ void main() {
           second.positionOf('vm1').x - second.positionOf('web').x,
         ],
         [
-          closeTo(441.7933154561815, 1e-5),
-          closeTo(227.80741633129946, 1e-5),
-          closeTo(332.99465409932236, 1e-5),
-          closeTo(188.59217977970275, 1e-5),
-          closeTo(250.00364483071098, 1e-5),
-          closeTo(256.45039091459694, 1e-5),
-          closeTo(-788.0451198792834, 1e-5),
+          // JS Math and Dart VM nonlinear force accumulation diverge by a few
+          // millionths after the two 1000-tick proof-quality passes.
+          closeTo(441.7933154561815, 5e-6),
+          closeTo(227.80741633129946, 5e-6),
+          closeTo(332.99465409932236, 5e-6),
+          closeTo(188.59217977970275, 5e-6),
+          closeTo(250.00364483071098, 5e-6),
+          closeTo(256.45039091459694, 5e-6),
+          closeTo(-788.0451198792834, 5e-6),
         ],
       );
     });

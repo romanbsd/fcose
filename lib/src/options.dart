@@ -25,6 +25,9 @@ final class FcoseOptions {
     this.nestingFactor = 0.1,
     this.compoundPadding = 10,
     this.componentSeparation = 60,
+    this.tile = true,
+    this.tilingPaddingVertical = 10,
+    this.tilingPaddingHorizontal = 10,
     this.initialEnergyOnIncremental = 0.3,
     this.minTemperature = 0.04,
     this.fixedNodes = const [],
@@ -71,6 +74,9 @@ final class FcoseOptions {
   final double nestingFactor;
   final double compoundPadding;
   final double componentSeparation;
+  final bool tile;
+  final double tilingPaddingVertical;
+  final double tilingPaddingHorizontal;
   final double initialEnergyOnIncremental;
   final double minTemperature;
   final List<FixedNodeConstraint> fixedNodes;

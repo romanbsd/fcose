@@ -1,8 +1,10 @@
 # fcose
 
-A framework-independent, pure Dart graph layout engine under development for a
-Dart port of Mermaid.js. The package is not yet a complete or parity-verified
-fCoSE port and should not be published as a drop-in replacement yet.
+A framework-independent, pure Dart graph layout engine for a Dart port of
+Mermaid.js. The Mermaid architecture execution path is parity-tested against
+Mermaid 11.16 and cytoscape-fcose 2.2.0. General fCoSE behavior outside that
+path is still under development, so the package is not yet a universal
+Cytoscape.js drop-in replacement.
 
 The package accepts measured node rectangles and compound parent IDs, then
 returns center positions and final rectangles. Rendering and edge routing stay
@@ -16,6 +18,8 @@ with the Mermaid renderer.
   convergence;
 - live compound-node forces, nesting-aware edge lengths, and compound gravity;
 - disconnected-component detection and packing;
+- cose-base area-ordered tiling and dummy-compound participation for
+  root-level zero-degree groups;
 - bottom-up compound bounds with configurable padding;
 - transformed and displacement-relaxed fixed, alignment, and DAG placement constraints;
 - typed quality and greedy/random sampling options;
@@ -66,10 +70,12 @@ final result = FcoseLayout(
 
 The adapter reproduces Mermaid's directional spatial maps, pairwise alignment
 flattening, duplicate constraints, JavaScript object-key ordering, and
-label-aware compound bounds across both layout passes. Its first and second
-passes match the browser-backed Mermaid 11.16 deep-compound fixture. Broader
-renderer parity is still in progress, so consumers should not claim general
-drop-in parity until the differential architecture corpus is complete.
+label-aware compound bounds across both layout passes. The differential corpus
+covers linear chains, seeded randomized runs, fan-in, mixed-axis and dense
+meshes, junction pairs and spines, sibling and nested compounds, combined
+row/column constraints, cross-group springs, and Mermaid's deep Azure fixture.
+Most fixtures use `1e-9` tolerances; repeated nonlinear spring accumulation
+stays within `5e-5` pixels across JavaScript and Dart floating-point runtimes.
 
 Renderer-specific ports, labels, SVG paths, and icon placement should be
 computed after layout.

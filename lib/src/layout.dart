@@ -50,7 +50,8 @@ final class FcoseLayout {
       return FcoseResult(positions: const {}, rectangles: const {}, iterations: 0);
     }
 
-    final working = _WorkingGraph(graph);
+    final rootTiling = _prepareRootZeroDegreeTiling(graph);
+    final working = _WorkingGraph(rootTiling?.graph ?? graph);
     final random = _Random(options.seed);
     final positions = _initialPositions(working, random);
     final constraintHandler = _constraintHandler;
@@ -59,11 +60,22 @@ final class FcoseLayout {
     }
     constraintHandler.enforce(positions);
 
+    if (_shouldTileFlatZeroDegreeNodes(working)) {
+      _tileFlatZeroDegreeNodes(working, positions);
+      final rectangles = working.compounds.rectangles(positions, padding: options.compoundPadding);
+      final effectiveMax = math.max(options.maxIterations, _minimumIterationsPerNode);
+      return FcoseResult(
+        positions: positions,
+        rectangles: rectangles,
+        iterations: options.quality == LayoutQuality.draft ? 0 : math.min(effectiveMax, _convergenceCheckPeriod),
+      );
+    }
+
     var iterations = 0;
     if (options.quality != LayoutQuality.draft) {
       iterations = _runSpringEmbedder(working, positions, constraintHandler);
     }
-    if (!_hasConstraints) {
+    if (!_hasConstraints && rootTiling == null) {
       _packComponents(working, positions);
     }
 
@@ -73,7 +85,8 @@ final class FcoseLayout {
       for (final node in graph.nodes)
         if (working.compounds.isCompound(node.id)) node.id: rectangles[node.id]!.center,
     };
-    return FcoseResult(positions: allPositions, rectangles: rectangles, iterations: iterations);
+    final result = FcoseResult(positions: allPositions, rectangles: rectangles, iterations: iterations);
+    return rootTiling == null ? result : _restoreRootZeroDegreeMembers(rootTiling, result);
   }
 
   Map<String, Offset> _initialPositions(_WorkingGraph graph, _Random random) {
@@ -118,7 +131,7 @@ final class FcoseLayout {
     var totalDisplacement = double.infinity;
     var oldTotalDisplacement = 0.0;
     final maxIterations = math.max(options.maxIterations, graph.graph.nodes.length * _minimumIterationsPerNode);
-    final maxCoolingCycle = maxIterations / 100;
+    final maxCoolingCycle = maxIterations / _convergenceCheckPeriod;
     var repulsionPairs = <(FcoseNode, FcoseNode)>[];
     final averageIdealLength = graph.edges.isEmpty
         ? options.idealEdgeLength
@@ -131,7 +144,7 @@ final class FcoseLayout {
     for (var iteration = 0; iteration < maxIterations; iteration++) {
       final iterationNumber = iteration + 1;
       if (iterationNumber == maxIterations) return iterationNumber;
-      if (iterationNumber % 100 == 0) {
+      if (iterationNumber % _convergenceCheckPeriod == 0) {
         final converged = totalDisplacement < totalDisplacementThreshold;
         final oscillating = iterationNumber > maxIterations / 3 && (totalDisplacement - oldTotalDisplacement).abs() < 2;
         oldTotalDisplacement = totalDisplacement;
@@ -339,6 +352,200 @@ final class FcoseLayout {
     return pairs;
   }
 
+  bool _shouldTileFlatZeroDegreeNodes(_WorkingGraph graph) =>
+      options.tile &&
+      !_hasConstraints &&
+      graph.edges.isEmpty &&
+      graph.graph.nodes.length > 1 &&
+      graph.graph.nodes.length == graph.leaves.length;
+
+  void _tileFlatZeroDegreeNodes(_WorkingGraph graph, Map<String, Offset> positions) {
+    // cytoscape-fcose relocates every unconstrained component after CoSE so
+    // that its geometry bounding-box center remains at the pre-layout center.
+    // This differs from tileNodes(), which organizes rows around the average
+    // of the input node centers.
+    final originalBoundsCenter = _leafBounds(graph.leaves, positions).center;
+    final organization = _tileNodes(graph.leaves, positions);
+    positions.addAll(organization.positions);
+
+    final tiledBoundsCenter = _leafBounds(graph.leaves, positions).center;
+    final relocation = originalBoundsCenter - tiledBoundsCenter;
+    for (final node in graph.leaves) {
+      positions[node.id] = positions[node.id]! + relocation;
+    }
+  }
+
+  _TiledOrganization _tileNodes(List<FcoseNode> members, Map<String, Offset> positions) {
+    final indexed = members.indexed.map((entry) => (index: entry.$1, node: entry.$2)).toList()
+      ..sort((first, second) {
+        final firstArea = first.node.width * first.node.height;
+        final secondArea = second.node.width * second.node.height;
+        final areaOrder = secondArea.compareTo(firstArea);
+        return areaOrder == 0 ? first.index.compareTo(second.index) : areaOrder;
+      });
+    final nodes = [for (final entry in indexed) entry.node];
+    final center = Offset(
+      nodes.fold(0.0, (sum, node) => sum + positions[node.id]!.x) / nodes.length,
+      nodes.fold(0.0, (sum, node) => sum + positions[node.id]!.y) / nodes.length,
+    );
+    final rows = <List<FcoseNode>>[];
+    final rowWidths = <double>[];
+    final rowHeights = <double>[];
+    var width = 0.0;
+    var height = 0.0;
+
+    int shortestRow() {
+      var result = 0;
+      for (var index = 1; index < rowWidths.length; index++) {
+        if (rowWidths[index] < rowWidths[result]) result = index;
+      }
+      return result;
+    }
+
+    bool canAddHorizontal(FcoseNode node) {
+      final shortest = shortestRow();
+      final minimumWidth = rowWidths[shortest];
+      if (minimumWidth + options.tilingPaddingHorizontal + node.width <= width) return true;
+      var heightDifference = 0.0;
+      if (rowHeights[shortest] < node.height && shortest > 0) {
+        heightDifference = node.height + options.tilingPaddingVertical - rowHeights[shortest];
+      }
+      var addToRowRatio = width - minimumWidth >= node.width + options.tilingPaddingHorizontal
+          ? (height + heightDifference) / (minimumWidth + node.width + options.tilingPaddingHorizontal)
+          : (height + heightDifference) / width;
+      final newRowHeight = node.height + options.tilingPaddingVertical;
+      var addNewRowRatio = (height + newRowHeight) / (width < node.width ? node.width : width);
+      if (addNewRowRatio < 1) addNewRowRatio = 1 / addNewRowRatio;
+      if (addToRowRatio < 1) addToRowRatio = 1 / addToRowRatio;
+      return addToRowRatio < addNewRowRatio;
+    }
+
+    void insert(FcoseNode node, int rowIndex) {
+      if (rowIndex == rows.length) {
+        rows.add([]);
+        rowWidths.add(0);
+        rowHeights.add(0);
+      }
+      var newWidth = rowWidths[rowIndex] + node.width;
+      if (rows[rowIndex].isNotEmpty) newWidth += options.tilingPaddingHorizontal;
+      rowWidths[rowIndex] = newWidth;
+      width = math.max(width, newWidth);
+      final newHeight = node.height + (rowIndex > 0 ? options.tilingPaddingVertical : 0);
+      if (newHeight > rowHeights[rowIndex]) {
+        height += newHeight - rowHeights[rowIndex];
+        rowHeights[rowIndex] = newHeight;
+      }
+      rows[rowIndex].add(node);
+    }
+
+    for (final node in nodes) {
+      if (rows.isEmpty) {
+        insert(node, 0);
+      } else if (canAddHorizontal(node)) {
+        insert(node, shortestRow());
+      } else {
+        insert(node, rows.length);
+      }
+    }
+
+    final tiledPositions = <String, Offset>{};
+    final left = center.x - width / 2;
+    var top = center.y - height / 2;
+    for (final row in rows) {
+      var x = left;
+      var maximumHeight = 0.0;
+      for (final node in row) {
+        tiledPositions[node.id] = Offset(x + node.width / 2, top + node.height / 2);
+        x += node.width + options.tilingPaddingHorizontal;
+        maximumHeight = math.max(maximumHeight, node.height);
+      }
+      top += maximumHeight + options.tilingPaddingVertical;
+    }
+    return _TiledOrganization(positions: tiledPositions, center: center, width: width, height: height);
+  }
+
+  _RootZeroDegreeTiling? _prepareRootZeroDegreeTiling(FcoseGraph graph) {
+    // This is the exact root-level subset of groupZeroDegreeMembers(). The
+    // randomized path must group after spectral initialization, while compound
+    // owners also require clearCompounds()/repopulateCompounds(); both remain
+    // separate follow-up stages rather than being approximated here.
+    if (!options.tile ||
+        options.randomize ||
+        _hasConstraints ||
+        graph.nodes.length != graph.leafNodes.length ||
+        graph.leafNodes.any((node) => node.position == null)) {
+      return null;
+    }
+    final incident = <String>{};
+    for (final edge in graph.edges) {
+      if (edge.source == edge.target) continue;
+      incident
+        ..add(edge.source)
+        ..add(edge.target);
+    }
+    final members = graph.leafNodes.where((node) => !incident.contains(node.id)).toList();
+    if (members.length < 2) return null;
+
+    const dummyId = 'DummyCompound_undefined';
+    if (graph.nodeById.containsKey(dummyId)) return null;
+    final initialPositions = {for (final node in graph.leafNodes) node.id: node.position!};
+    final organization = _tileNodes(members, initialPositions);
+    final retainedNodes = graph.nodes.where((node) => !organization.positions.containsKey(node.id));
+    final dummy = FcoseNode(
+      id: dummyId,
+      width: organization.width,
+      height: organization.height,
+      position: organization.center,
+    );
+    return _RootZeroDegreeTiling(
+      graph: FcoseGraph(nodes: [...retainedNodes, dummy], edges: graph.edges),
+      members: members,
+      organization: organization,
+      originalBoundsCenter: _leafBounds(graph.leafNodes, initialPositions).center,
+      dummyId: dummyId,
+    );
+  }
+
+  FcoseResult _restoreRootZeroDegreeMembers(_RootZeroDegreeTiling tiling, FcoseResult result) {
+    final dummyRect = result.rectangles[tiling.dummyId]!;
+    final organizationTopLeft = Offset(
+      tiling.organization.center.x - tiling.organization.width / 2,
+      tiling.organization.center.y - tiling.organization.height / 2,
+    );
+    final dummyTopLeft = Offset(dummyRect.left, dummyRect.top);
+    final positions = <String, Offset>{
+      for (final entry in result.positions.entries)
+        if (entry.key != tiling.dummyId) entry.key: entry.value,
+      for (final member in tiling.members)
+        member.id: dummyTopLeft + (tiling.organization.positions[member.id]! - organizationTopLeft),
+    };
+    final rectangles = <String, Rect>{
+      for (final entry in result.rectangles.entries)
+        if (entry.key != tiling.dummyId) entry.key: entry.value,
+      for (final member in tiling.members)
+        member.id: Rect.fromCenter(positions[member.id]!, member.width, member.height),
+    };
+
+    var bounds = rectangles.values.first;
+    for (final rectangle in rectangles.values.skip(1)) {
+      bounds = bounds.union(rectangle);
+    }
+    final relocation = tiling.originalBoundsCenter - bounds.center;
+    return FcoseResult(
+      positions: {for (final entry in positions.entries) entry.key: entry.value + relocation},
+      rectangles: {
+        for (final entry in rectangles.entries)
+          entry.key: Rect(
+            entry.value.left + relocation.x,
+            entry.value.top + relocation.y,
+            entry.value.width,
+            entry.value.height,
+          ),
+      },
+      iterations: result.iterations,
+    );
+  }
+
   ConstraintHandler get _constraintHandler => ConstraintHandler(
     fixedNodes: options.fixedNodes,
     alignment: options.alignment,
@@ -448,12 +655,26 @@ final class FcoseLayout {
     }
   }
 
+  Rect _leafBounds(Iterable<FcoseNode> nodes, Map<String, Offset> positions) {
+    final iterator = nodes.iterator..moveNext();
+    final first = iterator.current;
+    var bounds = Rect.fromCenter(positions[first.id]!, first.width, first.height);
+    while (iterator.moveNext()) {
+      final node = iterator.current;
+      bounds = bounds.union(Rect.fromCenter(positions[node.id]!, node.width, node.height));
+    }
+    return bounds;
+  }
+
   void _validateOptions() {
     if (options.maxIterations < 1 || options.sampleSize < 1) {
       throw ArgumentError('maxIterations and sampleSize must be positive');
     }
     if (options.idealEdgeLength <= 0 || options.nodeSeparation <= 0) {
       throw ArgumentError('layout lengths must be positive');
+    }
+    if (options.tilingPaddingHorizontal < 0 || options.tilingPaddingVertical < 0) {
+      throw ArgumentError('tiling padding must not be negative');
     }
     if (options.powerIterationTolerance <= 0) {
       throw ArgumentError.value(options.powerIterationTolerance, 'powerIterationTolerance', 'must be positive');
@@ -476,12 +697,40 @@ const _minimumSpringComponentLength = 1.0;
 /// layout-base's FR grid rebuilds each node's surrounding set every ten ticks.
 const _repulsionGridRefreshPeriod = 10;
 
+/// layout-base `FDLayoutConstants.CONVERGENCE_CHECK_PERIOD`, in iterations.
+const _convergenceCheckPeriod = 100;
+
 /// layout-base `LayoutConstants.DEFAULT_GRAPH_MARGIN`, in pixels.
 const _layoutBaseGraphMargin = 15.0;
 
 /// layout-base `FDLayout.initSpringEmbedder()` runs at least five iterations
 /// per CoSE node, even when the configured maximum is smaller.
 const _minimumIterationsPerNode = 5;
+
+final class _TiledOrganization {
+  const _TiledOrganization({required this.positions, required this.center, required this.width, required this.height});
+
+  final Map<String, Offset> positions;
+  final Offset center;
+  final double width;
+  final double height;
+}
+
+final class _RootZeroDegreeTiling {
+  const _RootZeroDegreeTiling({
+    required this.graph,
+    required this.members,
+    required this.organization,
+    required this.originalBoundsCenter,
+    required this.dummyId,
+  });
+
+  final FcoseGraph graph;
+  final List<FcoseNode> members;
+  final _TiledOrganization organization;
+  final Offset originalBoundsCenter;
+  final String dummyId;
+}
 
 final class _WorkingGraph {
   _WorkingGraph(this.graph)

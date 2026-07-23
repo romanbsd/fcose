@@ -11,40 +11,60 @@ with the Mermaid renderer.
 ## Implemented foundations
 
 - validated undirected compound graph model;
-- experimental deterministic landmark initialization;
-- CoSE-style spring, repulsion, gravity, cooling, and convergence;
+- sampled deterministic spectral initialization;
+- rectangle-clipped CoSE springs, repulsion, gravity, cooling, and convergence;
+- live compound-node forces, nesting-aware edge lengths, and compound gravity;
 - disconnected-component detection and packing;
 - bottom-up compound bounds with configurable padding;
-- fixed-node, horizontal/vertical alignment, and relative-placement constraints;
-- typed quality and sampling options (full upstream semantics are still being ported);
-- Mermaid option adapter for `randomize`, `nodeSeparation`,
-  `idealEdgeLengthMultiplier`, `edgeElasticity`, and `numIter`.
+- transformed and displacement-relaxed fixed, alignment, and DAG placement constraints;
+- typed quality and greedy/random sampling options;
+- Mermaid architecture adapter for topology-specific springs, directional
+  constraints, compound padding, and the renderer's two-pass layout lifecycle.
 
 ## Mermaid renderer integration
 
 Measure service/group labels and icons before layout, create an `FcoseNode` for
-each service and group, and use `parentId` for nested Mermaid groups. Convert
-links into `FcoseEdge` values and call:
+each service and group, and use `parentId` for nested Mermaid groups. Supply
+Cytoscape-grid initial positions when `randomize` is false, then configure the
+directional architecture links and declared alignment hints:
 
 ```dart
-final result = FcoseLayout(
-  options: FcoseOptions.mermaid(
-    randomize: false,
-    nodeSeparation: 75,
-    idealEdgeLengthMultiplier: 1,
-    edgeElasticity: 0.45,
-    numIter: 2500,
-  ),
-).run(graph);
+const adapter = MermaidFcoseAdapter(
+  iconSize: 80,
+  idealEdgeLengthMultiplier: 1.5,
+  edgeElasticity: 0.45,
+);
+final configuration = adapter.configureArchitecture(
+  graph,
+  directionalEdges: directionalEdges,
+  layoutHints: const [
+    MermaidAlignmentHint(
+      MermaidAlignmentDirection.row,
+      ['source-a', 'source-b'],
+    ),
+  ],
+);
+final result = configuration.runMermaidArchitecture();
 
-final serviceCenter = result.positionOf('service-id');
+final serviceCenter = result.positionOf('source-a');
 final groupBounds = result.rectOf('group-id');
 ```
 
-For directional Mermaid links, generate relative-placement constraints. A
-left-to-right link uses `RelativePlacementConstraint.horizontal(source,
-target)`; a top-to-bottom link uses the vertical constructor. Renderer-specific
-ports, labels, SVG paths, and icon placement should be computed after layout.
+`runMermaidArchitecture()` intentionally runs fCoSE twice. Mermaid's
+architecture renderer invokes a second layout from its one-shot `layoutstop`
+callback, using the first pass positions as the second pass input. For a
+single-pass general graph layout, call:
+
+```dart
+final result = FcoseLayout(
+  options: configuration.options,
+).run(
+  configuration.graph,
+);
+```
+
+Renderer-specific ports, labels, SVG paths, and icon placement should be
+computed after layout.
 
 ## Upstream mapping
 

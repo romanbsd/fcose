@@ -1,5 +1,71 @@
+import 'constraints.dart';
+import 'layout.dart';
 import 'model.dart';
 import 'options.dart';
+
+enum MermaidAlignmentDirection { row, column }
+
+enum MermaidArchitectureDirection { left, right, top, bottom }
+
+typedef MermaidSpatialMap = Map<String, ({int x, int y})>;
+typedef MermaidGroupAlignments = Map<String, Map<String, MermaidAlignmentDirection>>;
+
+final class MermaidAlignmentHint {
+  const MermaidAlignmentHint(this.direction, this.members);
+
+  final MermaidAlignmentDirection direction;
+  final List<String> members;
+}
+
+final class MermaidDirectionalEdge {
+  const MermaidDirectionalEdge({
+    required this.source,
+    required this.sourceDirection,
+    required this.target,
+    required this.targetDirection,
+  });
+
+  final String source;
+  final MermaidArchitectureDirection sourceDirection;
+  final String target;
+  final MermaidArchitectureDirection targetDirection;
+}
+
+final class MermaidArchitectureData {
+  const MermaidArchitectureData({required this.spatialMaps, required this.groupAlignments});
+
+  final List<MermaidSpatialMap> spatialMaps;
+  final MermaidGroupAlignments groupAlignments;
+}
+
+final class MermaidFcoseConfiguration {
+  const MermaidFcoseConfiguration({required this.graph, required this.options});
+
+  final FcoseGraph graph;
+  final FcoseOptions options;
+
+  /// Runs the two fCoSE passes used by Mermaid's architecture renderer.
+  ///
+  /// Mermaid invokes the configured layout once, then invokes it again from
+  /// its one-shot `layoutstop` callback after updating edge rendering. With
+  /// `randomize: false`, the second pass starts from the first pass positions.
+  FcoseResult runMermaidArchitecture() {
+    final first = FcoseLayout(options: options).run(graph);
+    final secondPassGraph = FcoseGraph(
+      nodes: graph.nodes.map(
+        (node) => FcoseNode(
+          id: node.id,
+          width: node.width,
+          height: node.height,
+          parentId: node.parentId,
+          position: first.positionOf(node.id),
+        ),
+      ),
+      edges: graph.edges,
+    );
+    return FcoseLayout(options: options).run(secondPassGraph);
+  }
+}
 
 /// Converts Mermaid architecture measurements and topology into fCoSE input.
 ///
@@ -11,6 +77,7 @@ final class MermaidFcoseAdapter {
     required this.iconSize,
     required this.idealEdgeLengthMultiplier,
     required this.edgeElasticity,
+    this.padding = 40,
     this.nodeSeparation = 75,
     this.numIter = 2500,
     this.randomize = false,
@@ -20,6 +87,7 @@ final class MermaidFcoseAdapter {
   final double iconSize;
   final double idealEdgeLengthMultiplier;
   final double edgeElasticity;
+  final double padding;
   final double nodeSeparation;
   final int numIter;
   final bool randomize;
@@ -33,6 +101,7 @@ final class MermaidFcoseAdapter {
     nodeSeparation: nodeSeparation,
     idealEdgeLength: idealEdgeLengthMultiplier * iconSize,
     edgeElasticity: edgeElasticity,
+    compoundPadding: padding,
   );
 
   FcoseGraph configureGraph(FcoseGraph graph) {
@@ -51,4 +120,259 @@ final class MermaidFcoseAdapter {
       }),
     );
   }
+
+  /// Converts Mermaid architecture spatial maps and declared `align` hints to
+  /// the exact fCoSE constraint shapes used by `architectureRenderer.ts`.
+  MermaidFcoseConfiguration configureLayout(
+    FcoseGraph graph, {
+    List<MermaidSpatialMap> spatialMaps = const [],
+    MermaidGroupAlignments groupAlignments = const {},
+    List<MermaidAlignmentHint> layoutHints = const [],
+  }) {
+    final alignment = _alignmentConstraints(graph, spatialMaps, groupAlignments, layoutHints);
+    final relative = _relativeConstraints(spatialMaps, layoutHints);
+    return MermaidFcoseConfiguration(
+      graph: configureGraph(graph),
+      options: FcoseOptions(
+        quality: LayoutQuality.proof,
+        randomize: randomize,
+        seed: seed,
+        maxIterations: numIter,
+        nodeSeparation: nodeSeparation,
+        idealEdgeLength: idealEdgeLengthMultiplier * iconSize,
+        edgeElasticity: edgeElasticity,
+        compoundPadding: padding,
+        alignment: alignment,
+        relativePlacements: relative,
+      ),
+    );
+  }
+
+  /// Full Mermaid architecture adapter entry point. It ports
+  /// `ArchitectureDB.getDataStructures()` before converting the resulting
+  /// spatial maps to fCoSE constraints.
+  MermaidFcoseConfiguration configureArchitecture(
+    FcoseGraph graph, {
+    required List<MermaidDirectionalEdge> directionalEdges,
+    List<MermaidAlignmentHint> layoutHints = const [],
+  }) {
+    final data = buildArchitectureData(graph, directionalEdges);
+    return configureLayout(
+      graph,
+      spatialMaps: data.spatialMaps,
+      groupAlignments: data.groupAlignments,
+      layoutHints: layoutHints,
+    );
+  }
+
+  MermaidArchitectureData buildArchitectureData(FcoseGraph graph, List<MermaidDirectionalEdge> directionalEdges) {
+    final leaves = graph.leafNodes.map((node) => node.id).toList();
+    final adjacency = {for (final id in leaves) id: <_DirectionPair, String>{}};
+    final groupAlignments = <String, Map<String, MermaidAlignmentDirection>>{};
+    for (final edge in directionalEdges) {
+      if (!adjacency.containsKey(edge.source) || !adjacency.containsKey(edge.target)) {
+        throw ArgumentError.value(edge, 'directionalEdges', 'endpoints must be leaf nodes');
+      }
+      final forward = _DirectionPair(edge.sourceDirection, edge.targetDirection);
+      final reverse = _DirectionPair(edge.targetDirection, edge.sourceDirection);
+      if (!forward.isValid) {
+        throw ArgumentError.value(edge, 'directionalEdges', 'matching port directions cannot form an edge');
+      }
+      adjacency[edge.source]![forward] = edge.target;
+      adjacency[edge.target]![reverse] = edge.source;
+
+      final sourceGroup = graph.nodeById[edge.source]!.parentId;
+      final targetGroup = graph.nodeById[edge.target]!.parentId;
+      final alignment = forward.alignment;
+      if (sourceGroup != null && targetGroup != null && sourceGroup != targetGroup && alignment != null) {
+        (groupAlignments[sourceGroup] ??= {})[targetGroup] = alignment;
+        (groupAlignments[targetGroup] ??= {})[sourceGroup] = alignment;
+      }
+    }
+    if (leaves.isEmpty) {
+      return const MermaidArchitectureData(spatialMaps: [], groupAlignments: {});
+    }
+
+    final visited = <String>{leaves.first};
+    final notVisited = leaves.skip(1).toSet();
+    MermaidSpatialMap breadthFirst(String start) {
+      final result = <String, ({int x, int y})>{start: (x: 0, y: 0)};
+      final queue = <String>[start];
+      while (queue.isNotEmpty) {
+        final current = queue.removeAt(0);
+        visited.add(current);
+        notVisited.remove(current);
+        final position = result[current]!;
+        for (final MapEntry(key: pair, value: neighbor) in adjacency[current]!.entries) {
+          if (visited.contains(neighbor)) continue;
+          result[neighbor] = pair.shift(position);
+          queue.add(neighbor);
+        }
+      }
+      return result;
+    }
+
+    final spatialMaps = <MermaidSpatialMap>[breadthFirst(leaves.first)];
+    while (notVisited.isNotEmpty) {
+      spatialMaps.add(breadthFirst(notVisited.first));
+    }
+    return MermaidArchitectureData(spatialMaps: spatialMaps, groupAlignments: groupAlignments);
+  }
+
+  AlignmentConstraint _alignmentConstraints(
+    FcoseGraph graph,
+    List<MermaidSpatialMap> spatialMaps,
+    MermaidGroupAlignments groupAlignments,
+    List<MermaidAlignmentHint> hints,
+  ) {
+    final horizontal = <List<String>>[];
+    final vertical = <List<String>>[];
+    for (final spatialMap in spatialMaps) {
+      final horizontalByCoordinate = <int, Map<String, List<String>>>{};
+      final verticalByCoordinate = <int, Map<String, List<String>>>{};
+      for (final MapEntry(key: id, value: position) in spatialMap.entries) {
+        final group = graph.nodeById[id]?.parentId ?? _defaultGroup;
+        ((horizontalByCoordinate[position.y] ??= {})[group] ??= []).add(id);
+        ((verticalByCoordinate[position.x] ??= {})[group] ??= []).add(id);
+      }
+      horizontal.addAll(_flattenAlignments(horizontalByCoordinate, MermaidAlignmentDirection.row, groupAlignments));
+      vertical.addAll(_flattenAlignments(verticalByCoordinate, MermaidAlignmentDirection.column, groupAlignments));
+    }
+
+    final declaredMembers = hints.expand((hint) => hint.members).toSet();
+    horizontal.removeWhere((group) => group.any(declaredMembers.contains));
+    vertical.removeWhere((group) => group.any(declaredMembers.contains));
+    for (final hint in hints.where((hint) => hint.members.length > 1)) {
+      (hint.direction == MermaidAlignmentDirection.row ? horizontal : vertical).add(List.of(hint.members));
+    }
+    return AlignmentConstraint(horizontal: horizontal, vertical: vertical);
+  }
+
+  List<List<String>> _flattenAlignments(
+    Map<int, Map<String, List<String>>> byCoordinate,
+    MermaidAlignmentDirection direction,
+    MermaidGroupAlignments groupAlignments,
+  ) {
+    final result = <List<String>>[];
+    for (final groups in byCoordinate.values) {
+      final entries = groups.entries.toList();
+      if (entries.length == 1) {
+        if (entries.single.value.length > 1) result.add(List.of(entries.single.value));
+        continue;
+      }
+      final merged = <String>[];
+      final separate = <String, List<String>>{};
+      for (var first = 0; first < entries.length - 1; first++) {
+        for (var second = first + 1; second < entries.length; second++) {
+          final a = entries[first];
+          final b = entries[second];
+          final compatible =
+              a.key == _defaultGroup ||
+              b.key == _defaultGroup ||
+              groupAlignments[a.key]?[b.key] == direction ||
+              groupAlignments[b.key]?[a.key] == direction;
+          if (compatible) {
+            merged
+              ..addAll(a.value)
+              ..addAll(b.value);
+          } else {
+            separate
+              ..putIfAbsent(a.key, () => a.value)
+              ..putIfAbsent(b.key, () => b.value);
+          }
+        }
+      }
+      if (merged.isNotEmpty) result.add(merged.toSet().toList());
+      result.addAll(separate.values.where((group) => group.length > 1).map(List.of));
+    }
+    return result;
+  }
+
+  List<RelativePlacementConstraint> _relativeConstraints(
+    List<MermaidSpatialMap> spatialMaps,
+    List<MermaidAlignmentHint> hints,
+  ) {
+    final result = <RelativePlacementConstraint>[];
+    final declaredPairs = <String>{};
+    final gap = idealEdgeLengthMultiplier * iconSize;
+    for (final hint in hints) {
+      for (var index = 0; index < hint.members.length - 1; index++) {
+        final first = hint.members[index];
+        final second = hint.members[index + 1];
+        declaredPairs
+          ..add('$first|$second')
+          ..add('$second|$first');
+        result.add(
+          hint.direction == MermaidAlignmentDirection.row
+              ? RelativePlacementConstraint.horizontal(first, second, gap: gap)
+              : RelativePlacementConstraint.vertical(first, second, gap: gap),
+        );
+      }
+    }
+
+    const shifts = [(-1, 0), (1, 0), (0, 1), (0, -1)];
+    for (final spatialMap in spatialMaps) {
+      final inverse = {for (final MapEntry(key: id, value: position) in spatialMap.entries) position: id};
+      final queue = <({int x, int y})>[(x: 0, y: 0)];
+      final visited = <({int x, int y})>{};
+      while (queue.isNotEmpty) {
+        final current = queue.removeAt(0);
+        if (!visited.add(current)) continue;
+        final currentId = inverse[current];
+        if (currentId == null) continue;
+        for (final (dx, dy) in shifts) {
+          final next = (x: current.x + dx, y: current.y + dy);
+          final nextId = inverse[next];
+          if (nextId == null || visited.contains(next)) continue;
+          queue.add(next);
+          if (declaredPairs.contains('$currentId|$nextId')) continue;
+          result.add(switch ((dx, dy)) {
+            (-1, 0) => RelativePlacementConstraint.horizontal(nextId, currentId, gap: gap),
+            (1, 0) => RelativePlacementConstraint.horizontal(currentId, nextId, gap: gap),
+            (0, 1) => RelativePlacementConstraint.vertical(nextId, currentId, gap: gap),
+            (0, -1) => RelativePlacementConstraint.vertical(currentId, nextId, gap: gap),
+            _ => throw StateError('unknown spatial-map direction'),
+          });
+        }
+      }
+    }
+    return result;
+  }
+}
+
+const _defaultGroup = 'default';
+
+final class _DirectionPair {
+  const _DirectionPair(this.source, this.target);
+
+  final MermaidArchitectureDirection source;
+  final MermaidArchitectureDirection target;
+
+  bool get isValid => source != target;
+  bool get _sourceIsHorizontal =>
+      source == MermaidArchitectureDirection.left || source == MermaidArchitectureDirection.right;
+  bool get _targetIsHorizontal =>
+      target == MermaidArchitectureDirection.left || target == MermaidArchitectureDirection.right;
+
+  MermaidAlignmentDirection? get alignment {
+    if (_sourceIsHorizontal != _targetIsHorizontal) return null;
+    return _sourceIsHorizontal ? MermaidAlignmentDirection.row : MermaidAlignmentDirection.column;
+  }
+
+  ({int x, int y}) shift(({int x, int y}) position) {
+    if (_sourceIsHorizontal) {
+      final x = position.x + (source == MermaidArchitectureDirection.left ? -1 : 1);
+      if (_targetIsHorizontal) return (x: x, y: position.y);
+      return (x: x, y: position.y + (target == MermaidArchitectureDirection.top ? 1 : -1));
+    }
+    final y = position.y + (source == MermaidArchitectureDirection.top ? 1 : -1);
+    if (!_targetIsHorizontal) return (x: position.x, y: y);
+    return (x: position.x + (target == MermaidArchitectureDirection.left ? 1 : -1), y: y);
+  }
+
+  @override
+  bool operator ==(Object other) => other is _DirectionPair && source == other.source && target == other.target;
+
+  @override
+  int get hashCode => Object.hash(source, target);
 }

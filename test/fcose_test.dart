@@ -145,6 +145,59 @@ void main() {
   });
 
   group('constraint handler', () {
+    test('rotates the randomized draft toward an alignment constraint', () {
+      final positions = <String, Offset>{
+        'a': const Offset(0, 0),
+        'b': const Offset(100, 100),
+        'free': const Offset(100, 0),
+      };
+
+      ConstraintHandler(
+        fixedNodes: [],
+        alignment: AlignmentConstraint(
+          vertical: [
+            ['a', 'b'],
+          ],
+        ),
+        relativePlacements: [],
+        defaultGap: 50,
+      ).transformInitial(positions);
+
+      expect(positions['a']!.x, closeTo(positions['b']!.x, 1e-9));
+      expect(positions['a']!.distanceTo(positions['b']!), closeTo(100 * 1.4142135623730951, 1e-9));
+      expect(positions['free']!.distanceTo(Offset.zero), closeTo(100, 1e-9));
+    });
+
+    test('rotates the dominant relative-placement DAG toward its axis', () {
+      final positions = <String, Offset>{
+        'a': const Offset(0, 0),
+        'b': const Offset(0, 100),
+        'c': const Offset(0, 200),
+        'free': const Offset(50, 0),
+      };
+
+      ConstraintHandler(
+        fixedNodes: [],
+        alignment: AlignmentConstraint(),
+        relativePlacements: [
+          RelativePlacementConstraint.horizontal('a', 'b', gap: 100),
+          RelativePlacementConstraint.horizontal('b', 'c', gap: 100),
+        ],
+        defaultGap: 50,
+      ).transformInitial(positions);
+
+      final firstStep = positions['b']! - positions['a']!;
+      final secondStep = positions['c']! - positions['b']!;
+      expect(firstStep.x, closeTo(100 / 1.4142135623730951, 1e-9));
+      expect(firstStep.y, closeTo(firstStep.x, 1e-9));
+      expect(secondStep.x, closeTo(firstStep.x, 1e-9));
+      expect(secondStep.y, closeTo(firstStep.y, 1e-9));
+      expect(positions['a']!.x, lessThan(positions['b']!.x));
+      expect(positions['b']!.x, lessThan(positions['c']!.x));
+      expect(positions['a']!.distanceTo(positions['c']!), closeTo(200, 1e-9));
+      expect(positions['free']!.distanceTo(Offset.zero), closeTo(50, 1e-9));
+    });
+
     test('solves combined row and column dummy groups from a fixed anchor', () {
       final positions = <String, Offset>{
         'a': const Offset(0, 0),
@@ -153,7 +206,7 @@ void main() {
         'd': const Offset(50, 25),
       };
 
-      const ConstraintHandler(
+      ConstraintHandler(
         fixedNodes: [FixedNodeConstraint('a', Offset(10, 20))],
         alignment: AlignmentConstraint(
           vertical: [
@@ -180,7 +233,7 @@ void main() {
 
     test('rejects overlapping alignment sets on one axis', () {
       expect(
-        () => const ConstraintHandler(
+        () => ConstraintHandler(
           fixedNodes: [],
           alignment: AlignmentConstraint(
             vertical: [
@@ -197,7 +250,7 @@ void main() {
 
     test('rejects a positive relative gap inside an alignment group', () {
       expect(
-        () => const ConstraintHandler(
+        () => ConstraintHandler(
           fixedNodes: [],
           alignment: AlignmentConstraint(
             vertical: [
@@ -209,6 +262,21 @@ void main() {
         ).enforce(<String, Offset>{'a': const Offset(0, 0), 'b': const Offset(10, 0)}),
         throwsArgumentError,
       );
+    });
+
+    test('rewrites pending displacements before relative nodes move', () {
+      final positions = <String, Offset>{'a': const Offset(0, 0), 'b': const Offset(100, 0)};
+      final displacements = <String, Offset>{'a': const Offset(10, 0), 'b': const Offset(-10, 0)};
+
+      ConstraintHandler(
+        fixedNodes: [],
+        alignment: AlignmentConstraint(),
+        relativePlacements: [RelativePlacementConstraint.horizontal('a', 'b', gap: 120)],
+        defaultGap: 50,
+      ).constrainDisplacements(positions, displacements, iteration: 1);
+
+      expect(displacements['a'], const Offset(-20, 0));
+      expect(displacements['b'], Offset.zero);
     });
   });
 
@@ -286,6 +354,33 @@ void main() {
       expect(result.rectOf('left').boundaryDistanceTo(result.rectOf('right')), greaterThan(60));
       expect(result.rectOf('left').containsRect(result.rectOf('a')), isTrue);
       expect(result.rectOf('right').containsRect(result.rectOf('b')), isTrue);
+    });
+
+    test('dampens compound movement around a fixed descendant', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 2,
+              gravity: 0,
+              nodeRepulsion: 0,
+              fixedNodes: [FixedNodeConstraint('anchor', Offset(0, 0))],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'group'),
+                FcoseNode(id: 'anchor', parentId: 'group', width: 20, height: 20, position: Offset(0, 0)),
+                FcoseNode(id: 'sibling', parentId: 'group', width: 20, height: 20, position: Offset(20, 0)),
+                FcoseNode(id: 'external', width: 20, height: 20, position: Offset(500, 0)),
+              ],
+              edges: const [FcoseEdge(id: 'group-external', source: 'group', target: 'external', idealLength: 100)],
+            ),
+          );
+
+      expect(result.positionOf('anchor'), const Offset(0, 0));
+      expect(result.positionOf('sibling').x, inInclusiveRange(20, 21));
     });
 
     test('adds layout-base smart size to cross-compound edge lengths', () {
@@ -403,10 +498,151 @@ void main() {
 
       expect(adapter.options.quality, LayoutQuality.proof);
       expect(adapter.options.randomize, isFalse);
+      expect(adapter.options.compoundPadding, 40);
       expect(configured.edges[0].idealLength, 120);
       expect(configured.edges[0].elasticity, 0.45);
       expect(configured.edges[1].idealLength, 40);
       expect(configured.edges[1].elasticity, 0.001);
+    });
+
+    test('Mermaid adapter applies architecture padding to live compound bounds', () {
+      final configuration =
+          const MermaidFcoseAdapter(iconSize: 80, idealEdgeLengthMultiplier: 1.5, edgeElasticity: 0.45).configureLayout(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'cloud'),
+                FcoseNode(id: 'api', parentId: 'cloud', width: 80, height: 80, position: Offset(0, 50)),
+                FcoseNode(id: 'db', parentId: 'cloud', width: 80, height: 80, position: Offset(50, 50)),
+              ],
+              edges: const [FcoseEdge(id: 'api-db', source: 'api', target: 'db')],
+            ),
+            spatialMaps: [
+              {'api': (x: 0, y: 0), 'db': (x: 1, y: 0)},
+            ],
+          );
+      final result = FcoseLayout(options: configuration.options).run(configuration.graph);
+      final centerGap = result.positionOf('db').x - result.positionOf('api').x;
+
+      expect(centerGap, closeTo(200.68656576118505, 1e-4));
+      expect(result.rectOf('cloud').width, closeTo(centerGap + 160, 1e-9));
+      expect(result.rectOf('cloud').height, 160);
+    });
+
+    test('Mermaid adapter converts spatial maps and align hints to constraints', () {
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'a', width: 80, height: 80, position: Offset(0, 0)),
+          FcoseNode(id: 'b', width: 80, height: 80, position: Offset(50, 0)),
+          FcoseNode(id: 'c', width: 80, height: 80, position: Offset(50, 50)),
+        ],
+        edges: const [
+          FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+          FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+        ],
+      );
+      const adapter = MermaidFcoseAdapter(iconSize: 80, idealEdgeLengthMultiplier: 1.5, edgeElasticity: 0.45);
+      final configuration = adapter.configureLayout(
+        graph,
+        spatialMaps: [
+          {'a': (x: 0, y: 0), 'b': (x: 1, y: 0), 'c': (x: 1, y: -1)},
+        ],
+        layoutHints: const [
+          MermaidAlignmentHint(MermaidAlignmentDirection.row, ['a', 'b']),
+        ],
+      );
+
+      expect(configuration.options.alignment.horizontal, [
+        ['a', 'b'],
+      ]);
+      expect(configuration.options.alignment.vertical, isEmpty);
+      expect(configuration.options.relativePlacements, hasLength(2));
+      expect(configuration.options.relativePlacements[0].first, 'a');
+      expect(configuration.options.relativePlacements[0].second, 'b');
+      expect(configuration.options.relativePlacements[0].axis, RelativePlacementAxis.horizontal);
+      expect(configuration.options.relativePlacements[1].first, 'b');
+      expect(configuration.options.relativePlacements[1].second, 'c');
+      expect(configuration.options.relativePlacements[1].axis, RelativePlacementAxis.vertical);
+
+      final result = FcoseLayout(options: configuration.options).run(configuration.graph);
+      expect(result.positionOf('a').y, closeTo(result.positionOf('b').y, 1e-9));
+      expect(result.positionOf('b').x - result.positionOf('a').x, greaterThanOrEqualTo(120));
+      expect(result.positionOf('c').y - result.positionOf('b').y, greaterThanOrEqualTo(120));
+    });
+
+    test('Mermaid adapter infers row and column alignment from a spatial map', () {
+      final configuration =
+          const MermaidFcoseAdapter(iconSize: 80, idealEdgeLengthMultiplier: 1.5, edgeElasticity: 0.45).configureLayout(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset(0, 0)),
+                FcoseNode(id: 'b', position: Offset(50, 0)),
+                FcoseNode(id: 'c', position: Offset(50, 50)),
+              ],
+            ),
+            spatialMaps: [
+              {'a': (x: 0, y: 0), 'b': (x: 1, y: 0), 'c': (x: 1, y: -1)},
+            ],
+          );
+
+      expect(configuration.options.alignment.horizontal, [
+        ['a', 'b'],
+      ]);
+      expect(configuration.options.alignment.vertical, [
+        ['b', 'c'],
+      ]);
+    });
+
+    test('Mermaid adapter ports directional BFS overwrite and disconnected-map semantics', () {
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'src1', position: Offset.zero),
+          FcoseNode(id: 'src2', position: Offset.zero),
+          FcoseNode(id: 'src3', position: Offset.zero),
+          FcoseNode(id: 'proc', position: Offset.zero),
+        ],
+      );
+      const edges = [
+        MermaidDirectionalEdge(
+          source: 'src1',
+          sourceDirection: MermaidArchitectureDirection.bottom,
+          target: 'proc',
+          targetDirection: MermaidArchitectureDirection.top,
+        ),
+        MermaidDirectionalEdge(
+          source: 'src2',
+          sourceDirection: MermaidArchitectureDirection.bottom,
+          target: 'proc',
+          targetDirection: MermaidArchitectureDirection.top,
+        ),
+        MermaidDirectionalEdge(
+          source: 'src3',
+          sourceDirection: MermaidArchitectureDirection.bottom,
+          target: 'proc',
+          targetDirection: MermaidArchitectureDirection.top,
+        ),
+      ];
+      const adapter = MermaidFcoseAdapter(iconSize: 80, idealEdgeLengthMultiplier: 1.5, edgeElasticity: 0.45);
+      final data = adapter.buildArchitectureData(graph, edges);
+
+      expect(data.spatialMaps, [
+        {'src1': (x: 0, y: 0), 'proc': (x: 0, y: -1), 'src3': (x: 0, y: 0)},
+        {'src2': (x: 0, y: 0)},
+      ]);
+
+      final configuration = adapter.configureArchitecture(
+        graph,
+        directionalEdges: edges,
+        layoutHints: const [
+          MermaidAlignmentHint(MermaidAlignmentDirection.row, ['src1', 'src2', 'src3']),
+        ],
+      );
+      expect(configuration.options.alignment.horizontal, [
+        ['src1', 'src2', 'src3'],
+      ]);
+      expect(configuration.options.relativePlacements, hasLength(3));
+      expect(configuration.options.relativePlacements.last.first, 'src3');
+      expect(configuration.options.relativePlacements.last.second, 'proc');
+      expect(configuration.options.relativePlacements.last.axis, RelativePlacementAxis.vertical);
     });
 
     test('treats ideal edge length as boundary-to-boundary distance', () {
@@ -459,6 +695,103 @@ void main() {
       final stretched = layout(3);
       expect(defaults.positionOf('b').x - defaults.positionOf('a').x, closeTo(200.68652784647548, 1e-4));
       expect(stretched.positionOf('b').x - stretched.positionOf('a').x, closeTo(320.17331510624684, 1e-4));
+    });
+
+    test('preserves Mermaid row-aligned fan-in constraints during force refinement', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              idealEdgeLength: 120,
+              edgeElasticity: 0.45,
+              alignment: AlignmentConstraint(
+                horizontal: [
+                  ['src1', 'src2', 'src3'],
+                ],
+              ),
+              relativePlacements: [
+                RelativePlacementConstraint.horizontal('src1', 'src2', gap: 120),
+                RelativePlacementConstraint.horizontal('src2', 'src3', gap: 120),
+                RelativePlacementConstraint.vertical('src3', 'proc', gap: 120),
+              ],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'src1', width: 80, height: 80, position: Offset(0, 0)),
+                FcoseNode(id: 'src2', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'src3', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'proc', width: 80, height: 80, position: Offset.zero),
+              ],
+              edges: const [
+                FcoseEdge(id: '1p', source: 'src1', target: 'proc'),
+                FcoseEdge(id: '2p', source: 'src2', target: 'proc'),
+                FcoseEdge(id: '3p', source: 'src3', target: 'proc'),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('src1').y, closeTo(result.positionOf('src2').y, 1e-9));
+      expect(result.positionOf('src2').y, closeTo(result.positionOf('src3').y, 1e-9));
+      expect(result.positionOf('src2').x - result.positionOf('src1').x, greaterThanOrEqualTo(120));
+      expect(result.positionOf('src3').x - result.positionOf('src2').x, greaterThanOrEqualTo(120));
+      expect(result.positionOf('proc').y - result.positionOf('src3').y, greaterThanOrEqualTo(120));
+    });
+
+    test('tracks Mermaid 11.16 row-aligned fan-in geometry', () {
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'src1', width: 80, height: 80, position: Offset(45, 45)),
+          FcoseNode(id: 'src2', width: 80, height: 80, position: Offset(135, 45)),
+          FcoseNode(id: 'src3', width: 80, height: 80, position: Offset(45, 135)),
+          FcoseNode(id: 'proc', width: 80, height: 80, position: Offset(135, 135)),
+        ],
+        edges: const [
+          FcoseEdge(id: 'src1-proc', source: 'src1', target: 'proc'),
+          FcoseEdge(id: 'src2-proc', source: 'src2', target: 'proc'),
+          FcoseEdge(id: 'src3-proc', source: 'src3', target: 'proc'),
+        ],
+      );
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+          ).configureArchitecture(
+            graph,
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'src1',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'proc',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'src2',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'proc',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'src3',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'proc',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+            ],
+            layoutHints: const [
+              MermaidAlignmentHint(MermaidAlignmentDirection.row, ['src1', 'src2', 'src3']),
+            ],
+          );
+      final result = configuration.runMermaidArchitecture();
+
+      // Mermaid scene coordinates include renderer-level sub-pixel offsets;
+      // the underlying cytoscape-fcose 2.2.0 values differ by less than 0.003px.
+      expect(result.positionOf('src2').x - result.positionOf('src1').x, closeTo(126.76058618426365, 0.01));
+      expect(result.positionOf('src3').x - result.positionOf('src2').x, closeTo(127.95720834057621, 0.01));
+      expect(result.positionOf('proc').x - result.positionOf('src1').x, closeTo(127.89431275973804, 0.01));
+      expect(result.positionOf('proc').y - result.positionOf('src1').y, closeTo(186.70164581351315, 0.01));
     });
 
     test('requires complete initial positions when randomize is false', () {

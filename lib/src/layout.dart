@@ -53,15 +53,19 @@ final class FcoseLayout {
     final working = _WorkingGraph(graph);
     final random = _Random(options.seed);
     final positions = _initialPositions(working, random);
-    _projectConstraints(positions);
+    final constraintHandler = _constraintHandler;
+    if (options.randomize) {
+      constraintHandler.transformInitial(positions);
+    }
+    constraintHandler.enforce(positions);
 
     var iterations = 0;
     if (options.quality != LayoutQuality.draft) {
-      iterations = _runSpringEmbedder(working, positions);
+      iterations = _runSpringEmbedder(working, positions, constraintHandler);
     }
-    _projectConstraints(positions);
-    _packComponents(working, positions);
-    _projectConstraints(positions);
+    if (!_hasConstraints) {
+      _packComponents(working, positions);
+    }
 
     final rectangles = working.compounds.rectangles(positions, padding: options.compoundPadding);
     final allPositions = <String, Offset>{
@@ -98,7 +102,7 @@ final class FcoseLayout {
     ).run(component, graph.adjacency).positions;
   }
 
-  int _runSpringEmbedder(_WorkingGraph graph, Map<String, Offset> positions) {
+  int _runSpringEmbedder(_WorkingGraph graph, Map<String, Offset> positions, ConstraintHandler constraintHandler) {
     final forces = <String, Offset>{};
     final fixed = options.fixedNodes.map((constraint) => constraint.nodeId).toSet();
     var coolingFactor = options.initialEnergyOnIncremental;
@@ -176,7 +180,13 @@ final class FcoseLayout {
             final distanceY =
                 (firstRect.center.y - secondRect.center.y).abs() - (firstRect.height + secondRect.height) / 2;
             if (distanceX > repulsionRange || distanceY > repulsionRange) continue;
-            final boundaryDistance = math.max(1, delta.length);
+            final minimumComponentDistance = averageIdealLength / 10;
+            delta = Offset(
+              delta.x.abs() < minimumComponentDistance ? delta.x.sign * minimumComponentDistance : delta.x,
+              delta.y.abs() < minimumComponentDistance ? delta.y.sign * minimumComponentDistance : delta.y,
+            );
+            final boundaryDistance = delta.length;
+            if (boundaryDistance == 0) continue;
             final magnitude =
                 options.nodeRepulsion * firstWeight * secondWeight / (boundaryDistance * boundaryDistance);
             final force = delta.normalized() * magnitude;
@@ -195,15 +205,20 @@ final class FcoseLayout {
         final targetRect = rectangles[target]!;
         var delta = sourceRect.boundaryDisplacementTo(targetRect);
         if (delta.length < 1e-7) continue;
+        delta = Offset(
+          delta.x.abs() < _minimumSpringComponentLength ? delta.x.sign : delta.x,
+          delta.y.abs() < _minimumSpringComponentLength ? delta.y.sign : delta.y,
+        );
         final baseIdeal = edge.idealLength ?? options.idealEdgeLength;
-        final lca = graph.compounds.lowestCommonOwner(source, target);
-        final lcaDepth = lca == null ? 1 : graph.compounds.inclusionDepthOf(lca);
-        final nestingDepth =
-            graph.compounds.inclusionDepthOf(source) + graph.compounds.inclusionDepthOf(target) - 2 * lcaDepth;
-        var ideal = baseIdeal * (1 + options.nestingFactor * nestingDepth);
+        var ideal = baseIdeal;
         if (graph.compounds.ownerOf(source) != graph.compounds.ownerOf(target)) {
+          final lca = graph.compounds.lowestCommonOwner(source, target);
+          final lcaDepth = lca == null ? 1 : graph.compounds.inclusionDepthOf(lca);
+          final nestingDepth =
+              graph.compounds.inclusionDepthOf(source) + graph.compounds.inclusionDepthOf(target) - 2 * lcaDepth;
           final sourceInLca = graph.compounds.childInOwner(source, lca);
           final targetInLca = graph.compounds.childInOwner(target, lca);
+          ideal += baseIdeal * options.nestingFactor * nestingDepth;
           ideal +=
               graph.compounds.estimatedSizeOf(sourceInLca) +
               graph.compounds.estimatedSizeOf(targetInLca) -
@@ -235,8 +250,12 @@ final class FcoseLayout {
             gravityForce = (ownerCenter - position) * strength;
           }
         }
-        final childWeight = graph.compounds.descendantLeaves(node.id).length;
-        var displacement = (forces[node.id]! + gravityForce) * (coolingFactor / childWeight);
+        final descendants = graph.compounds.descendantLeaves(node.id).toList();
+        final fixedDescendantCount = descendants.where(fixed.contains).length;
+        // cose-base assigns weight 100 to each fixed leaf below a compound so
+        // forces on the ancestor only gently move its unfixed descendants.
+        final movementWeight = fixedDescendantCount == 0 ? descendants.length : fixedDescendantCount * 100;
+        var displacement = (forces[node.id]! + gravityForce) * (coolingFactor / movementWeight);
         final displacementLimit = coolingFactor * 100;
         displacement = Offset(
           displacement.x.clamp(-displacementLimit, displacementLimit),
@@ -246,30 +265,35 @@ final class FcoseLayout {
         // descendant leaves; only leaf nodes are moved in the subsequent move
         // phase. Keeping these phases separate also makes every gravity force
         // use the same iteration geometry.
-        for (final leaf in graph.compounds.descendantLeaves(node.id)) {
+        for (final leaf in descendants) {
           if (!fixed.contains(leaf)) {
             leafDisplacements[leaf] = leafDisplacements[leaf]! + displacement;
           }
         }
       }
       totalDisplacement = 0;
+      constraintHandler.constrainDisplacements(positions, leafDisplacements, iteration: iterationNumber);
       for (final entry in leafDisplacements.entries) {
         positions[entry.key] = positions[entry.key]! + entry.value;
         totalDisplacement += entry.value.x.abs() + entry.value.y.abs();
       }
-      _projectConstraints(positions);
     }
     return options.maxIterations;
   }
 
-  void _projectConstraints(Map<String, Offset> positions) {
-    ConstraintHandler(
-      fixedNodes: options.fixedNodes,
-      alignment: options.alignment,
-      relativePlacements: options.relativePlacements,
-      defaultGap: options.idealEdgeLength,
-    ).enforce(positions);
-  }
+  ConstraintHandler get _constraintHandler => ConstraintHandler(
+    fixedNodes: options.fixedNodes,
+    alignment: options.alignment,
+    relativePlacements: options.relativePlacements,
+    defaultGap: options.idealEdgeLength,
+    seed: options.seed,
+  );
+
+  bool get _hasConstraints =>
+      options.fixedNodes.isNotEmpty ||
+      options.alignment.vertical.isNotEmpty ||
+      options.alignment.horizontal.isNotEmpty ||
+      options.relativePlacements.isNotEmpty;
 
   void _packComponents(_WorkingGraph graph, Map<String, Offset> positions) {
     if (graph.components.length < 2 || options.fixedNodes.isNotEmpty) return;
@@ -384,6 +408,10 @@ final class FcoseLayout {
 
 /// layout-base `LayoutConstants.SIMPLE_NODE_SIZE`, in logical pixels.
 const _layoutBaseSimpleNodeSize = 40.0;
+
+/// `LEdge.updateLength()` snaps sub-pixel clipped spring components to their
+/// sign before calculating length, avoiding unstable near-axis projections.
+const _minimumSpringComponentLength = 1.0;
 
 final class _WorkingGraph {
   _WorkingGraph(this.graph)

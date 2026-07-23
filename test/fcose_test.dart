@@ -1847,6 +1847,34 @@ void main() {
       expect(result.positionOf('c').y - result.positionOf('b').y, greaterThanOrEqualTo(120));
     });
 
+    test('Mermaid adapter keeps declared pairs distinct for arbitrary node IDs', () {
+      final configuration =
+          const MermaidFcoseAdapter(iconSize: 80, idealEdgeLengthMultiplier: 1.5, edgeElasticity: 0.45).configureLayout(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a'),
+                FcoseNode(id: 'b|c'),
+                FcoseNode(id: 'a|b'),
+                FcoseNode(id: 'c'),
+              ],
+            ),
+            spatialMaps: [
+              {'a': (x: 0, y: 0), 'b|c': (x: 1, y: 0)},
+            ],
+            layoutHints: const [
+              MermaidAlignmentHint(MermaidAlignmentDirection.row, ['a|b', 'c']),
+            ],
+          );
+
+      expect(configuration.options.relativePlacements, hasLength(2));
+      expect(
+        configuration.options.relativePlacements[1],
+        isA<RelativePlacementConstraint>()
+            .having((constraint) => constraint.first, 'first', 'a')
+            .having((constraint) => constraint.second, 'second', 'b|c'),
+      );
+    });
+
     test('Mermaid adapter preserves JavaScript alignment ordering and duplicates', () {
       final configuration =
           const MermaidFcoseAdapter(iconSize: 80, idealEdgeLengthMultiplier: 1.5, edgeElasticity: 0.45).configureLayout(

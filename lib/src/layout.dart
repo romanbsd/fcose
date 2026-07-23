@@ -149,9 +149,10 @@ final class FcoseLayout {
       for (final node in layoutNodes)
         if (graph.compounds.isCompound(node.id)) node.id,
     };
+    final descendantsByNode = {for (final node in layoutNodes) node.id: graph.compounds.descendantLeaves(node.id)};
     final movementWeights = <String, int>{};
     for (final node in layoutNodes) {
-      final descendants = graph.compounds.descendantLeaves(node.id);
+      final descendants = descendantsByNode[node.id]!;
       final fixedDescendantCount = descendants.where(fixed.contains).length;
       movementWeights[node.id] = fixedDescendantCount == 0 ? descendants.length : fixedDescendantCount * 100;
     }
@@ -223,8 +224,8 @@ final class FcoseLayout {
       for (final (first, second) in repulsionPairs) {
         final firstRect = rectangles[first.id]!;
         final secondRect = rectangles[second.id]!;
-        final firstWeight = graph.compounds.descendantLeaves(first.id).length;
-        final secondWeight = graph.compounds.descendantLeaves(second.id).length;
+        final firstWeight = descendantsByNode[first.id]!.length;
+        final secondWeight = descendantsByNode[second.id]!.length;
         if (firstRect.overlaps(secondRect)) {
           final childFactor = firstWeight * secondWeight / (firstWeight + secondWeight);
           final separation = firstRect.separationAmountTo(secondRect, buffer: averageIdealLength / 2);
@@ -283,7 +284,7 @@ final class FcoseLayout {
             gravityForce = (ownerCenter - position) * gravity.strength;
           }
         }
-        final descendants = graph.compounds.descendantLeaves(node.id);
+        final descendants = descendantsByNode[node.id]!;
         // cose-base assigns weight 100 to each fixed leaf below a compound so
         // forces on the ancestor only gently move its unfixed descendants.
         var displacement = (forces[node.id]! + gravityForce) * (coolingFactor / movementWeights[node.id]!);
@@ -413,10 +414,14 @@ final class FcoseLayout {
         return areaOrder == 0 ? first.index.compareTo(second.index) : areaOrder;
       });
     final nodes = [for (final entry in indexed) entry.node];
-    final center = Offset(
-      nodes.fold(0.0, (sum, node) => sum + positions[node.id]!.x) / nodes.length,
-      nodes.fold(0.0, (sum, node) => sum + positions[node.id]!.y) / nodes.length,
-    );
+    var centerX = 0.0;
+    var centerY = 0.0;
+    for (final node in nodes) {
+      final position = positions[node.id]!;
+      centerX += position.x;
+      centerY += position.y;
+    }
+    final center = Offset(centerX / nodes.length, centerY / nodes.length);
     final rows = <List<FcoseNode>>[];
     final rowWidths = <double>[];
     final rowHeights = <double>[];
@@ -623,19 +628,18 @@ final class FcoseLayout {
   }
 
   void _validateConstraints(FcoseGraph graph) {
-    final ids = graph.nodeById.keys.toSet();
     final constrained = <String>[
       ...options.fixedNodes.map((constraint) => constraint.nodeId),
       ...options.alignment.vertical.expand((group) => group),
       ...options.alignment.horizontal.expand((group) => group),
       ...options.relativePlacements.expand((constraint) => [constraint.first, constraint.second]),
     ];
-    final unknown = constrained.where((id) => !ids.contains(id)).toSet();
+    final unknown = constrained.where((id) => !graph.nodeById.containsKey(id)).toSet();
     if (unknown.isNotEmpty) throw ArgumentError.value(unknown, 'constraints', 'unknown node IDs');
 
-    final compoundIds = graph.nodes
-        .where((node) => graph.childrenByParent[node.id]?.isNotEmpty ?? false)
-        .map((node) => node.id)
+    final compoundIds = graph.childrenByParent.entries
+        .where((entry) => entry.key != null && entry.value.isNotEmpty)
+        .map((entry) => entry.key!)
         .toSet();
     final constrainedCompounds = constrained.where(compoundIds.contains).toSet();
     if (constrainedCompounds.isNotEmpty) {
@@ -797,22 +801,6 @@ final class _WorkingGraph {
   final Map<String, String> _representatives = {};
 
   String representative(String id) => _representatives.putIfAbsent(id, () => compounds.spectralRepresentative(id));
-
-  Map<String, int> distances(String start, Iterable<String> allowed) {
-    final allowedSet = allowed.toSet();
-    final result = <String, int>{start: 0};
-    final queue = Queue<String>()..add(start);
-    while (queue.isNotEmpty) {
-      final current = queue.removeFirst();
-      for (final next in adjacency[current]!) {
-        if (allowedSet.contains(next) && !result.containsKey(next)) {
-          result[next] = result[current]! + 1;
-          queue.add(next);
-        }
-      }
-    }
-    return result;
-  }
 
   List<List<String>> _findComponents() {
     final unseen = adjacency.keys.toSet();

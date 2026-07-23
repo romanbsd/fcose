@@ -52,12 +52,14 @@ final class SpectralInitializer {
     final samples = samplingType == SamplingType.greedy
         ? _greedySamples(nodes, nodeSet, adjacency, count)
         : _randomSamples(nodes, count);
-    final distances = <List<double>>[];
-    for (final sample in samples) {
+    final c = List.generate(nodes.length, (_) => List<double>.filled(count, 0));
+    for (var sampleIndex = 0; sampleIndex < samples.length; sampleIndex++) {
+      final sample = samples[sampleIndex];
       final column = _distances(sample, nodeSet, adjacency);
-      distances.add([for (final node in nodes) math.pow(column[node]! * nodeSeparation, 2).toDouble()]);
+      for (var nodeIndex = 0; nodeIndex < nodes.length; nodeIndex++) {
+        c[nodeIndex][sampleIndex] = math.pow(column[nodes[nodeIndex]]! * nodeSeparation, 2).toDouble();
+      }
     }
-    final c = List.generate(nodes.length, (row) => List.generate(count, (column) => distances[column][row]));
     final index = {for (var i = 0; i < nodes.length; i++) nodes[i]: i};
     final phi = List.generate(count, (row) => List.generate(count, (column) => c[index[samples[column]]!][row]));
     final inverse = _regularizedInverse(phi);
@@ -155,18 +157,19 @@ final class SpectralInitializer {
         temp[column] += -0.5 * c[row][column] * vector[row];
       }
     }
-    final projected = List<double>.generate(
-      columns,
-      (row) =>
-          List.generate(columns, (column) => inverse[row][column] * temp[column]).fold(0, (sum, value) => sum + value),
-    );
-    return _center(
-      List.generate(
-        c.length,
-        (row) =>
-            List.generate(columns, (column) => c[row][column] * projected[column]).fold(0, (sum, value) => sum + value),
-      ),
-    );
+    final projected = List<double>.filled(columns, 0);
+    for (var row = 0; row < columns; row++) {
+      for (var column = 0; column < columns; column++) {
+        projected[row] += inverse[row][column] * temp[column];
+      }
+    }
+    final result = List<double>.filled(c.length, 0);
+    for (var row = 0; row < c.length; row++) {
+      for (var column = 0; column < columns; column++) {
+        result[row] += c[row][column] * projected[column];
+      }
+    }
+    return _center(result);
   }
 
   List<List<double>> _regularizedInverse(List<List<double>> matrix) {

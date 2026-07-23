@@ -317,15 +317,15 @@ final class MermaidFcoseAdapter {
     List<MermaidAlignmentHint> hints,
   ) {
     final result = <RelativePlacementConstraint>[];
-    final declaredPairs = <String>{};
+    final declaredPairs = <(String, String)>{};
     final gap = _sameParentIdealLength;
     for (final hint in hints) {
       for (var index = 0; index < hint.members.length - 1; index++) {
         final first = hint.members[index];
         final second = hint.members[index + 1];
         declaredPairs
-          ..add('$first|$second')
-          ..add('$second|$first');
+          ..add((first, second))
+          ..add((second, first));
         result.add(
           hint.direction == MermaidAlignmentDirection.row
               ? RelativePlacementConstraint.horizontal(first, second, gap: gap)
@@ -352,7 +352,7 @@ final class MermaidFcoseAdapter {
           final nextId = inverse[next];
           if (nextId == null || visited.contains(next)) continue;
           queue.add(next);
-          if (declaredPairs.contains('$currentId|$nextId')) continue;
+          if (declaredPairs.contains((currentId, nextId))) continue;
           result.add(switch ((dx, dy)) {
             (-1, 0) => RelativePlacementConstraint.horizontal(nextId, currentId, gap: gap),
             (1, 0) => RelativePlacementConstraint.horizontal(currentId, nextId, gap: gap),

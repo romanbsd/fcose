@@ -108,6 +108,23 @@ void main() {
       expect(manager.estimatedSizeOfOwner('root'), closeTo(20 * 2 / 1.4142135623730951, 1e-12));
     });
 
+    test('preserves nested graph order when enumerating descendant leaves', () {
+      final manager = CompoundGraphManager(
+        FcoseGraph(
+          nodes: const [
+            FcoseNode(id: 'parent'),
+            FcoseNode(id: 'branch', parentId: 'parent'),
+            FcoseNode(id: 'first', parentId: 'branch'),
+            FcoseNode(id: 'second', parentId: 'parent'),
+            FcoseNode(id: 'third', parentId: 'branch'),
+          ],
+        ),
+      );
+
+      expect(manager.descendantLeaves('parent'), ['first', 'third', 'second']);
+      expect(manager.descendantLeaves('parent'), ['first', 'third', 'second']);
+    });
+
     test('updates compound bounds and propagates displacement', () {
       final positions = <String, Offset>{'a': const Offset(0, 0), 'b': const Offset(100, 0)};
       final rectangles = manager.rectangles(positions, padding: 10);

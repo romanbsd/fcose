@@ -252,7 +252,7 @@ final class FcoseLayout {
             gravityForce = (ownerCenter - position) * strength;
           }
         }
-        final descendants = graph.compounds.descendantLeaves(node.id).toList();
+        final descendants = graph.compounds.descendantLeaves(node.id);
         final fixedDescendantCount = descendants.where(fixed.contains).length;
         // cose-base assigns weight 100 to each fixed leaf below a compound so
         // forces on the ancestor only gently move its unfixed descendants.
@@ -294,7 +294,7 @@ final class FcoseLayout {
     Map<String, Rect> rectangles,
     double repulsionRange,
   ) {
-    final nodes = graph.compounds.layoutOrder.toList();
+    final nodes = graph.compounds.layoutOrder;
     final rootNodes = graph.graph.childrenByParent[null]!;
     var rootBounds = rectangles[rootNodes.first.id]!;
     for (final node in rootNodes.skip(1)) {

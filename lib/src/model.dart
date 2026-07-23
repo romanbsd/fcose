@@ -72,7 +72,9 @@ final class FcoseGraph {
     return result;
   }();
 
-  Iterable<FcoseNode> get leafNodes => nodes.where((node) => !(childrenByParent[node.id]?.isNotEmpty ?? false));
+  late final List<FcoseNode> leafNodes = List.unmodifiable(
+    nodes.where((node) => !(childrenByParent[node.id]?.isNotEmpty ?? false)),
+  );
 
   void _validate() {
     final ids = <String>{};
@@ -96,7 +98,7 @@ final class FcoseGraph {
         if (!ancestors.add(current)) {
           throw ArgumentError.value(node.id, 'nodes', 'compound parent cycle');
         }
-        current = nodes.firstWhere((candidate) => candidate.id == current).parentId;
+        current = nodeById[current]!.parentId;
       }
     }
     final edgeIds = <String>{};

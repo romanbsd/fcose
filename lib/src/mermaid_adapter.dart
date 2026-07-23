@@ -1,7 +1,16 @@
+import 'dart:collection';
+
 import 'constraints.dart';
 import 'layout.dart';
 import 'model.dart';
 import 'options.dart';
+
+/// Mermaid architecture uses half an icon as the boundary distance for edges
+/// that cross compound parents.
+const _crossParentIdealLengthFactor = 0.5;
+
+/// Mermaid's weak elasticity for edges that cross compound parents.
+const _crossParentElasticity = 0.001;
 
 enum MermaidAlignmentDirection { row, column }
 
@@ -98,16 +107,27 @@ final class MermaidFcoseAdapter {
   final bool randomize;
   final int seed;
 
-  FcoseOptions get options => FcoseOptions(
+  double get _sameParentIdealLength => idealEdgeLengthMultiplier * iconSize;
+
+  double get _crossParentIdealLength => _crossParentIdealLengthFactor * iconSize;
+
+  FcoseOptions _options({
+    AlignmentConstraint alignment = const AlignmentConstraint(),
+    List<RelativePlacementConstraint> relativePlacements = const [],
+  }) => FcoseOptions(
     quality: LayoutQuality.proof,
     randomize: randomize,
     seed: seed,
     maxIterations: numIter,
     nodeSeparation: nodeSeparation,
-    idealEdgeLength: idealEdgeLengthMultiplier * iconSize,
+    idealEdgeLength: _sameParentIdealLength,
     edgeElasticity: edgeElasticity,
     compoundPadding: padding,
+    alignment: alignment,
+    relativePlacements: relativePlacements,
   );
+
+  FcoseOptions get options => _options();
 
   FcoseGraph configureGraph(FcoseGraph graph) {
     final nodes = graph.nodeById;
@@ -119,8 +139,8 @@ final class MermaidFcoseAdapter {
           id: edge.id,
           source: edge.source,
           target: edge.target,
-          idealLength: edge.idealLength ?? (sameParent ? idealEdgeLengthMultiplier * iconSize : 0.5 * iconSize),
-          elasticity: edge.elasticity ?? (sameParent ? edgeElasticity : 0.001),
+          idealLength: edge.idealLength ?? (sameParent ? _sameParentIdealLength : _crossParentIdealLength),
+          elasticity: edge.elasticity ?? (sameParent ? edgeElasticity : _crossParentElasticity),
         );
       }),
     );
@@ -138,18 +158,7 @@ final class MermaidFcoseAdapter {
     final relative = _relativeConstraints(spatialMaps, layoutHints);
     return MermaidFcoseConfiguration(
       graph: configureGraph(graph),
-      options: FcoseOptions(
-        quality: LayoutQuality.proof,
-        randomize: randomize,
-        seed: seed,
-        maxIterations: numIter,
-        nodeSeparation: nodeSeparation,
-        idealEdgeLength: idealEdgeLengthMultiplier * iconSize,
-        edgeElasticity: edgeElasticity,
-        compoundPadding: padding,
-        alignment: alignment,
-        relativePlacements: relative,
-      ),
+      options: _options(alignment: alignment, relativePlacements: relative),
     );
   }
 
@@ -202,9 +211,9 @@ final class MermaidFcoseAdapter {
     final notVisited = leaves.skip(1).toSet();
     MermaidSpatialMap breadthFirst(String start) {
       final result = <String, ({int x, int y})>{start: (x: 0, y: 0)};
-      final queue = <String>[start];
+      final queue = Queue<String>()..add(start);
       while (queue.isNotEmpty) {
-        final current = queue.removeAt(0);
+        final current = queue.removeFirst();
         visited.add(current);
         notVisited.remove(current);
         final position = result[current]!;
@@ -309,7 +318,7 @@ final class MermaidFcoseAdapter {
   ) {
     final result = <RelativePlacementConstraint>[];
     final declaredPairs = <String>{};
-    final gap = idealEdgeLengthMultiplier * iconSize;
+    final gap = _sameParentIdealLength;
     for (final hint in hints) {
       for (var index = 0; index < hint.members.length - 1; index++) {
         final first = hint.members[index];
@@ -328,10 +337,10 @@ final class MermaidFcoseAdapter {
     const shifts = [(-1, 0), (1, 0), (0, 1), (0, -1)];
     for (final spatialMap in spatialMaps) {
       final inverse = {for (final MapEntry(key: id, value: position) in spatialMap.entries) position: id};
-      final queue = <({int x, int y})>[(x: 0, y: 0)];
+      final queue = Queue<({int x, int y})>()..add((x: 0, y: 0));
       final visited = <({int x, int y})>{};
       while (queue.isNotEmpty) {
-        final current = queue.removeAt(0);
+        final current = queue.removeFirst();
         // Mermaid processes duplicate queue entries again. The visited map
         // prevents new back-edges from being queued, but does not skip an
         // already-queued coordinate when it is later removed.

@@ -52,7 +52,7 @@ final class Rect {
   double get bottom => y + height;
   Offset get center => Offset(x + width / 2, y + height / 2);
 
-  bool overlaps(Rect other) => left < other.right && right > other.left && top < other.bottom && bottom > other.top;
+  bool overlaps(Rect other) => left <= other.right && right >= other.left && top <= other.bottom && bottom >= other.top;
 
   bool containsRect(Rect other) =>
       left <= other.left && top <= other.top && right >= other.right && bottom >= other.bottom;

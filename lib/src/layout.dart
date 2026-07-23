@@ -110,6 +110,7 @@ final class FcoseLayout {
     var totalDisplacement = double.infinity;
     var oldTotalDisplacement = 0.0;
     final maxCoolingCycle = options.maxIterations / 100;
+    final repulsionPairs = <(String, String)>{};
     final averageIdealLength = graph.edges.isEmpty
         ? options.idealEdgeLength
         : graph.edges
@@ -154,32 +155,34 @@ final class FcoseLayout {
             final second = siblings[j];
             final firstRect = rectangles[first.id]!;
             final secondRect = rectangles[second.id]!;
+            final pair = (first.id, second.id);
+            if (iterationNumber % _repulsionGridRefreshPeriod == 1) {
+              final distanceX =
+                  (firstRect.center.x - secondRect.center.x).abs() - (firstRect.width + secondRect.width) / 2;
+              final distanceY =
+                  (firstRect.center.y - secondRect.center.y).abs() - (firstRect.height + secondRect.height) / 2;
+              final repulsionRange = 2 * averageIdealLength;
+              if (distanceX <= repulsionRange && distanceY <= repulsionRange) {
+                repulsionPairs.add(pair);
+              } else {
+                repulsionPairs.remove(pair);
+              }
+            }
+            if (!repulsionPairs.contains(pair)) continue;
             final firstWeight = graph.compounds.descendantLeaves(first.id).length;
             final secondWeight = graph.compounds.descendantLeaves(second.id).length;
             if (firstRect.overlaps(secondRect)) {
               final childFactor = firstWeight * secondWeight / (firstWeight + secondWeight);
-              final separation = firstRect.separationAmountTo(secondRect, buffer: options.idealEdgeLength / 2);
+              final separation = firstRect.separationAmountTo(secondRect, buffer: averageIdealLength / 2);
               final force = separation * (-2 * childFactor);
               forces[first.id] = forces[first.id]! + force;
               forces[second.id] = forces[second.id]! - force;
               continue;
             }
             var delta = secondRect.boundaryDisplacementTo(firstRect);
-            if (delta.length < 1e-7) {
-              delta = firstRect.center - secondRect.center;
-            }
-            if (delta.length < 1e-7) {
-              delta = Offset(1e-3 * (i + 1), 1e-3 * (j + 1));
-            }
             // CoSE's FR-grid variant only evaluates nodes in the surrounding
-            // range: 2 * (level + 1) * idealEdgeLength. At the root level this
-            // excludes non-neighbouring nodes in Mermaid's linear chains.
-            final repulsionRange = 2 * options.idealEdgeLength;
-            final distanceX =
-                (firstRect.center.x - secondRect.center.x).abs() - (firstRect.width + secondRect.width) / 2;
-            final distanceY =
-                (firstRect.center.y - secondRect.center.y).abs() - (firstRect.height + secondRect.height) / 2;
-            if (distanceX > repulsionRange || distanceY > repulsionRange) continue;
+            // range for ten iterations, matching layout-base's cached grid
+            // neighborhood.
             final minimumComponentDistance = averageIdealLength / 10;
             delta = Offset(
               delta.x.abs() < minimumComponentDistance ? delta.x.sign * minimumComponentDistance : delta.x,
@@ -412,6 +415,9 @@ const _layoutBaseSimpleNodeSize = 40.0;
 /// `LEdge.updateLength()` snaps sub-pixel clipped spring components to their
 /// sign before calculating length, avoiding unstable near-axis projections.
 const _minimumSpringComponentLength = 1.0;
+
+/// layout-base's FR grid rebuilds each node's surrounding set every ten ticks.
+const _repulsionGridRefreshPeriod = 10;
 
 final class _WorkingGraph {
   _WorkingGraph(this.graph)

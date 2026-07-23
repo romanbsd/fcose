@@ -57,6 +57,15 @@ void main() {
       expect(source.boundaryDisplacementTo(target), Offset.zero);
     });
 
+    test('treats edge-touching rectangles as intersecting like layout-base', () {
+      const source = Rect(0, 0, 40, 40);
+      const target = Rect(40, 0, 40, 40);
+
+      expect(source.overlaps(target), isTrue);
+      expect(source.boundaryDistanceTo(target), 0);
+      expect(source.separationAmountTo(target, buffer: 25), const Offset(25, -25));
+    });
+
     test('calculates layout-base overlap separation with an edge-length buffer', () {
       final source = Rect.fromCenter(const Offset(0, 0), 80, 80);
       final target = Rect.fromCenter(const Offset(20, 0), 80, 80);
@@ -231,6 +240,64 @@ void main() {
       expect(positions['d'], const Offset(110, 80));
     });
 
+    test('shifts a predecessor chain behind a fixed target', () {
+      final positions = <String, Offset>{'a': const Offset(0, 0), 'b': const Offset(50, 0), 'c': const Offset(100, 0)};
+
+      ConstraintHandler(
+        fixedNodes: [FixedNodeConstraint('c', Offset(100, 0))],
+        alignment: AlignmentConstraint(),
+        relativePlacements: [
+          RelativePlacementConstraint.horizontal('a', 'b', gap: 80),
+          RelativePlacementConstraint.horizontal('b', 'c', gap: 80),
+        ],
+        defaultGap: 50,
+      ).enforce(positions);
+
+      expect(positions['a'], const Offset(-60, 0));
+      expect(positions['b'], const Offset(20, 0));
+      expect(positions['c'], const Offset(100, 0));
+    });
+
+    test('collapses excess spacing after a fixed source', () {
+      final positions = <String, Offset>{'a': const Offset(0, 0), 'b': const Offset(100, 0), 'c': const Offset(200, 0)};
+
+      ConstraintHandler(
+        fixedNodes: [FixedNodeConstraint('a', Offset.zero)],
+        alignment: AlignmentConstraint(),
+        relativePlacements: [
+          RelativePlacementConstraint.horizontal('a', 'b', gap: 80),
+          RelativePlacementConstraint.horizontal('b', 'c', gap: 80),
+        ],
+        defaultGap: 50,
+      ).enforce(positions);
+
+      expect(positions['a'], Offset.zero);
+      expect(positions['b'], const Offset(80, 0));
+      expect(positions['c'], const Offset(160, 0));
+    });
+
+    test('recenters a fixed-free sink predecessor set independently', () {
+      final positions = <String, Offset>{
+        'a': const Offset(0, 0),
+        'fixed': const Offset(100, 0),
+        'free': const Offset(300, 0),
+      };
+
+      ConstraintHandler(
+        fixedNodes: [FixedNodeConstraint('fixed', const Offset(100, 0))],
+        alignment: AlignmentConstraint(),
+        relativePlacements: [
+          RelativePlacementConstraint.horizontal('a', 'fixed', gap: 80),
+          RelativePlacementConstraint.horizontal('a', 'free', gap: 80),
+        ],
+        defaultGap: 50,
+      ).enforce(positions);
+
+      expect(positions['a'], const Offset(110, 0));
+      expect(positions['fixed'], const Offset(100, 0));
+      expect(positions['free'], const Offset(190, 0));
+    });
+
     test('rejects overlapping alignment sets on one axis', () {
       expect(
         () => ConstraintHandler(
@@ -380,7 +447,7 @@ void main() {
           );
 
       expect(result.positionOf('anchor'), const Offset(0, 0));
-      expect(result.positionOf('sibling').x, inInclusiveRange(20, 21));
+      expect(result.positionOf('sibling').x, closeTo(35.4725, 1e-4));
     });
 
     test('adds layout-base smart size to cross-compound edge lengths', () {
@@ -526,6 +593,62 @@ void main() {
       expect(centerGap, closeTo(200.68656576118505, 1e-4));
       expect(result.rectOf('cloud').width, closeTo(centerGap + 160, 1e-9));
       expect(result.rectOf('cloud').height, 160);
+    });
+
+    test('Mermaid adapter tracks nested architecture compound geometry', () {
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+          ).configureArchitecture(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'api'),
+                FcoseNode(id: 'public', parentId: 'api'),
+                FcoseNode(id: 'private', parentId: 'api'),
+                FcoseNode(id: 'serv1', parentId: 'public', width: 80, height: 80, position: Offset(45, 45)),
+                FcoseNode(id: 'serv2', parentId: 'private', width: 80, height: 80, position: Offset(135, 45)),
+                FcoseNode(id: 'db', parentId: 'private', width: 80, height: 80, position: Offset(45, 135)),
+                FcoseNode(id: 'gateway', parentId: 'api', width: 80, height: 80, position: Offset(135, 135)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'serv1-serv2', source: 'serv1', target: 'serv2'),
+                FcoseEdge(id: 'serv2-db', source: 'serv2', target: 'db'),
+                FcoseEdge(id: 'serv1-gateway', source: 'serv1', target: 'gateway'),
+              ],
+            ),
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'serv1',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'serv2',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'serv2',
+                sourceDirection: MermaidArchitectureDirection.left,
+                target: 'db',
+                targetDirection: MermaidArchitectureDirection.right,
+              ),
+              MermaidDirectionalEdge(
+                source: 'serv1',
+                sourceDirection: MermaidArchitectureDirection.left,
+                target: 'gateway',
+                targetDirection: MermaidArchitectureDirection.right,
+              ),
+            ],
+          );
+
+      final result = configuration.runMermaidArchitecture();
+      expect(
+        [
+          result.positionOf('serv2').y - result.positionOf('serv1').y,
+          result.positionOf('serv2').x - result.positionOf('db').x,
+          result.positionOf('serv1').x - result.positionOf('gateway').x,
+        ],
+        [closeTo(255.17247257587814, 0.75), closeTo(201.29653714581747, 0.75), closeTo(222.65023530391295, 0.75)],
+      );
     });
 
     test('Mermaid adapter converts spatial maps and align hints to constraints', () {

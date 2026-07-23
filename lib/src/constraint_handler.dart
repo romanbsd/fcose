@@ -514,14 +514,22 @@ final class ConstraintHandler {
     }
     final originalIndegree = Map<String, int>.of(indegree);
     for (final component in components) {
-      if (component.any(fixedGroups.containsKey)) continue;
       final sources = component.where((group) => originalIndegree[group] == 0).toList();
-      final sourceCenter = sources.map((group) => initial[group]!).reduce((a, b) => a + b) / sources.length;
       for (final group in component) {
         values[group] = double.negativeInfinity;
       }
-      for (final source in sources) {
-        values[source] = sourceCenter;
+      final fixedSources = sources.where(fixedGroups.containsKey).toList();
+      if (fixedSources.isNotEmpty) {
+        final sourceCenter =
+            fixedSources.map((source) => fixedGroups[source]!).reduce((a, b) => a + b) / fixedSources.length;
+        for (final source in sources) {
+          values[source] = fixedGroups[source] ?? sourceCenter;
+        }
+      } else {
+        final sourceCenter = sources.map((source) => initial[source]!).reduce((a, b) => a + b) / sources.length;
+        for (final source in sources) {
+          values[source] = sourceCenter;
+        }
       }
     }
     final queue = <String>[...indegree.keys.where((group) => indegree[group] == 0)];
@@ -538,30 +546,43 @@ final class ConstraintHandler {
       throw ArgumentError('relative placement constraints must form a DAG');
     }
 
-    // Pull predecessors back from fixed targets, then push successors forward.
-    for (final source in order.reversed) {
-      for (final edge in outgoing[source] ?? const []) {
-        if (fixedGroups.containsKey(edge.target) && !fixedGroups.containsKey(source)) {
-          values[source] = values[source]!.clamp(double.negativeInfinity, values[edge.target]! - edge.gap);
-        }
-      }
-    }
+    final past = {
+      for (final group in members.keys) group: <String>{group},
+    };
     for (final source in order) {
       for (final edge in outgoing[source] ?? const []) {
         final required = values[source]! + edge.gap;
         if (fixedGroups.containsKey(edge.target)) {
-          if (values[edge.target]! < required) {
-            throw ArgumentError.value(edge, 'relativePlacements', 'fixed target violates required gap');
+          final fixedPosition = fixedGroups[edge.target]!;
+          values[edge.target] = fixedPosition;
+          if (fixedPosition < required) {
+            final shift = required - fixedPosition;
+            for (final predecessor in past[source]!) {
+              values[predecessor] = values[predecessor]! - shift;
+            }
           }
         } else if (values[edge.target]! < required) {
           values[edge.target] = required;
         }
+        past[edge.target] = {...past[source]!, ...past[edge.target]!};
       }
     }
-    // cose-base keeps every unconstrained DAG component centered on its
-    // pre-enforcement min/max midpoint after expanding it to satisfy gaps.
-    for (final component in components) {
-      if (component.any(fixedGroups.containsKey)) continue;
+
+    // cose-base readjusts each fixed-free sink predecessor set around its
+    // pre-enforcement midpoint. Sets with a common earliest predecessor are
+    // merged, including fixed and fixed-free branches in the same weak DAG.
+    final adjustableComponents = <Set<String>>[];
+    for (final sink in members.keys.where((group) => (outgoing[group] ?? const []).isEmpty)) {
+      final predecessors = past[sink]!;
+      if (predecessors.any(fixedGroups.containsKey)) continue;
+      final existing = adjustableComponents.indexWhere((component) => component.contains(predecessors.first));
+      if (existing == -1) {
+        adjustableComponents.add({...predecessors});
+      } else {
+        adjustableComponents[existing].addAll(predecessors);
+      }
+    }
+    for (final component in adjustableComponents) {
       final before = component.map((group) => initial[group]!);
       final after = component.map((group) => values[group]!);
       final shift =

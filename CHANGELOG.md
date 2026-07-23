@@ -3,3 +3,5 @@
 - Start an experimental pure Dart port of cytoscape-fcose.
 - Add deterministic spectral initialization and CoSE-style force refinement.
 - Add compound nodes, disconnected component packing, and placement constraints.
+- Add CoSE leaf reduction, staged tree regrowth, sparse-side placement, and
+  post-growth cooling.

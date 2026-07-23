@@ -63,6 +63,8 @@ distances.
 - sampled deterministic spectral initialization;
 - rectangle-clipped CoSE springs and overlap separation;
 - per-node repulsion, gravity, cooling, and convergence;
+- same-owner leaf reduction, ten-tick staged regrowth, and post-growth
+  convergence/cooling;
 - live compound-node forces, nesting-aware edge lengths, and compound gravity;
 - disconnected-component detection and compound-safe packing;
 - root-level area-ordered zero-degree tiling;
@@ -77,7 +79,6 @@ distances.
 
 The largest known differences from cytoscape-fcose 2.2.0 are:
 
-- CoSE tree reduction, incremental regrowth, and post-growth cooling;
 - spectral dummy-node connections between disconnected top-level and nested
   compound components;
 - randomized zero-degree grouping and nested-owner compound

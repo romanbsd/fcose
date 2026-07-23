@@ -74,7 +74,7 @@ final class FcoseLayout {
 
     var iterations = 0;
     if (options.quality != LayoutQuality.draft) {
-      iterations = _runSpringEmbedder(working, positions, constraintHandler);
+      iterations = _runSpringEmbedder(working, positions, constraintHandler, random);
     }
     if (!_hasConstraints && rootTiling == null) {
       _packComponents(working, positions);
@@ -143,7 +143,90 @@ final class FcoseLayout {
     return (edge: edge, idealLength: idealLength, elasticity: edge.elasticity ?? options.edgeElasticity);
   }
 
-  int _runSpringEmbedder(_WorkingGraph graph, Map<String, Offset> positions, ConstraintHandler constraintHandler) {
+  int _runSpringEmbedder(
+    _WorkingGraph graph,
+    Map<String, Offset> positions,
+    ConstraintHandler constraintHandler,
+    Xorshift32 random,
+  ) {
+    if (_hasConstraints) {
+      return _runSpringPhase(graph, positions, constraintHandler).iterations;
+    }
+    final reduction = _TreeReduction.create(graph, positions);
+    if (reduction.rounds.isEmpty) {
+      return _runSpringPhase(graph, positions, constraintHandler).iterations;
+    }
+
+    final activeNodeIds = reduction.coreNodeIds.toSet();
+    var activeGraph = _WorkingGraph(reduction.activeGraph(activeNodeIds));
+    var phase = _runSpringPhase(activeGraph, positions, constraintHandler);
+    var iterations = phase.iterations;
+    final coreIterationLimit = phase.iterationLimit;
+    final coreOldTotalDisplacement = phase.oldTotalDisplacement;
+    final treePlacementEdgeLength = graph.edges.isEmpty
+        ? options.idealEdgeLength
+        : graph.edges
+                  .map((edge) => edge.idealLength ?? options.idealEdgeLength)
+                  .reduce((first, second) => first + second) /
+              graph.edges.length;
+
+    for (final round in reduction.rounds.reversed) {
+      _restorePrunedRound(round, activeGraph, positions, random, treePlacementEdgeLength);
+      activeNodeIds.addAll(round.map((pruned) => pruned.nodeId));
+      activeGraph = _WorkingGraph(reduction.activeGraph(activeNodeIds));
+      phase = _runSpringPhase(
+        activeGraph,
+        positions,
+        constraintHandler,
+        forcedTicks: _treeGrowthStepIterations,
+        fixedCoolingFactor: options.randomize
+            ? options.initialEnergyOnIncremental
+            : options.initialEnergyOnIncremental / 2,
+        terminateBeforeLimit: false,
+        checkConvergence: false,
+      );
+      iterations += phase.iterations;
+    }
+
+    if (phase.totalDisplacement < phase.totalDisplacementThreshold) {
+      return iterations;
+    }
+    final postGrowth = _runSpringPhase(
+      activeGraph,
+      positions,
+      constraintHandler,
+      forcedTicks: _postGrowthIterations,
+      fixedCoolingFactor: options.randomize
+          ? options.initialEnergyOnIncremental
+          : options.initialEnergyOnIncremental / 2,
+      terminateBeforeLimit: false,
+      initialTotalDisplacement: phase.totalDisplacement,
+      checkConvergenceEveryTick: true,
+      linearCooling: true,
+      convergenceReturnsPreviousTick: true,
+      initialOldTotalDisplacement: coreOldTotalDisplacement,
+      oscillationIterationOffset: iterations,
+      oscillationIterationLimit: coreIterationLimit,
+    );
+    return iterations + postGrowth.iterations;
+  }
+
+  _SpringPhaseResult _runSpringPhase(
+    _WorkingGraph graph,
+    Map<String, Offset> positions,
+    ConstraintHandler constraintHandler, {
+    int? forcedTicks,
+    double? fixedCoolingFactor,
+    bool terminateBeforeLimit = true,
+    bool checkConvergence = true,
+    double? initialTotalDisplacement,
+    bool checkConvergenceEveryTick = false,
+    bool linearCooling = false,
+    bool convergenceReturnsPreviousTick = false,
+    double initialOldTotalDisplacement = 0,
+    int oscillationIterationOffset = 0,
+    int? oscillationIterationLimit,
+  }) {
     final fixed = options.fixedNodes.map((constraint) => constraint.nodeId).toSet();
     final layoutNodes = graph.compounds.layoutOrder;
     final compoundIds = {
@@ -174,11 +257,12 @@ final class FcoseLayout {
     final forces = {for (final node in graph.graph.nodes) node.id: Offset.zero};
     final leafDisplacements = {for (final leaf in graph.leaves) leaf.id: Offset.zero};
     final ownerBounds = <String?, Rect>{};
-    var coolingFactor = options.initialEnergyOnIncremental;
+    var coolingFactor = fixedCoolingFactor ?? options.initialEnergyOnIncremental;
     var coolingCycle = 0;
-    var totalDisplacement = double.infinity;
-    var oldTotalDisplacement = 0.0;
-    final maxIterations = math.max(options.maxIterations, graph.graph.nodes.length * _minimumIterationsPerNode);
+    var totalDisplacement = initialTotalDisplacement ?? double.infinity;
+    var oldTotalDisplacement = initialOldTotalDisplacement;
+    final maxIterations =
+        forcedTicks ?? math.max(options.maxIterations, graph.graph.nodes.length * _minimumIterationsPerNode);
     final maxCoolingCycle = maxIterations / _convergenceCheckPeriod;
     final coolingExponent = maxIterations <= _convergenceCheckPeriod
         ? 0.0
@@ -194,23 +278,48 @@ final class FcoseLayout {
 
     for (var iteration = 0; iteration < maxIterations; iteration++) {
       final iterationNumber = iteration + 1;
+      if (linearCooling) {
+        coolingFactor =
+            (fixedCoolingFactor ?? options.initialEnergyOnIncremental) *
+            ((_postGrowthIterations - iteration) / _postGrowthIterations);
+      }
       // cose-base's tick() increments totalIterations, then terminates at the
       // limit before calculating that tick's forces.
-      if (iterationNumber == maxIterations) return iterationNumber;
-      if (iterationNumber % _convergenceCheckPeriod == 0) {
-        final converged = totalDisplacement < totalDisplacementThreshold;
-        final oscillating = iterationNumber > maxIterations / 3 && (totalDisplacement - oldTotalDisplacement).abs() < 2;
-        oldTotalDisplacement = totalDisplacement;
-        if (converged || oscillating) return iterationNumber;
-        coolingCycle++;
-        final adjuster = switch (options.quality) {
-          LayoutQuality.draft || LayoutQuality.defaultQuality => coolingCycle.toDouble(),
-          LayoutQuality.proof => 1.0,
-        };
-        coolingFactor = math.max(
-          options.initialEnergyOnIncremental - math.pow(coolingCycle, coolingExponent) / 100 * adjuster,
-          options.minTemperature,
+      if (terminateBeforeLimit && iterationNumber == maxIterations) {
+        return _SpringPhaseResult(
+          iterationNumber,
+          totalDisplacement,
+          totalDisplacementThreshold,
+          oldTotalDisplacement,
+          maxIterations,
         );
+      }
+      if (checkConvergence && (checkConvergenceEveryTick || iterationNumber % _convergenceCheckPeriod == 0)) {
+        final converged = totalDisplacement < totalDisplacementThreshold;
+        final oscillating =
+            oscillationIterationOffset + iterationNumber > (oscillationIterationLimit ?? maxIterations) / 3 &&
+            (totalDisplacement - oldTotalDisplacement).abs() < 2;
+        oldTotalDisplacement = totalDisplacement;
+        if (converged || oscillating) {
+          return _SpringPhaseResult(
+            convergenceReturnsPreviousTick ? iteration : iterationNumber,
+            totalDisplacement,
+            totalDisplacementThreshold,
+            oldTotalDisplacement,
+            maxIterations,
+          );
+        }
+        coolingCycle++;
+        if (fixedCoolingFactor == null) {
+          final adjuster = switch (options.quality) {
+            LayoutQuality.draft || LayoutQuality.defaultQuality => coolingCycle.toDouble(),
+            LayoutQuality.proof => 1.0,
+          };
+          coolingFactor = math.max(
+            options.initialEnergyOnIncremental - math.pow(coolingCycle, coolingExponent) / 100 * adjuster,
+            options.minTemperature,
+          );
+        }
       }
       final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
       for (final node in graph.graph.nodes) {
@@ -319,7 +428,108 @@ final class FcoseLayout {
         totalDisplacement += entry.value.x.abs() + entry.value.y.abs();
       }
     }
-    return maxIterations;
+    return _SpringPhaseResult(
+      maxIterations,
+      totalDisplacement,
+      totalDisplacementThreshold,
+      oldTotalDisplacement,
+      maxIterations,
+    );
+  }
+
+  void _restorePrunedRound(
+    List<_PrunedNode> round,
+    _WorkingGraph activeGraph,
+    Map<String, Offset> positions,
+    Xorshift32 random,
+    double treePlacementEdgeLength,
+  ) {
+    if (!options.randomize) {
+      for (final pruned in round) {
+        positions[pruned.node.id] = positions[pruned.otherId]! + pruned.relativeOffset;
+      }
+      return;
+    }
+
+    final rectangles = activeGraph.compounds.rectangles(positions, padding: options.compoundPadding);
+    final nodes = activeGraph.compounds.layoutOrder;
+    final rootNodes = activeGraph.graph.childrenByParent[null]!;
+    var rootBounds = rectangles[rootNodes.first.id]!;
+    for (final node in rootNodes.skip(1)) {
+      rootBounds = rootBounds.union(rectangles[node.id]!);
+    }
+    rootBounds = rootBounds.inflate(_layoutBaseGraphMargin);
+    final repulsionRange = 2 * treePlacementEdgeLength;
+    final sizeX = math.max(1, (rootBounds.width / repulsionRange).ceil());
+    final sizeY = math.max(1, (rootBounds.height / repulsionRange).ceil());
+    final grid = List.generate(sizeX, (_) => List<int>.filled(sizeY, 0));
+    final coordinates = <String, ({int startX, int finishX, int startY, int finishY})>{};
+    for (final node in nodes) {
+      final rectangle = rectangles[node.id]!;
+      final coordinate = (
+        startX: ((rectangle.left - rootBounds.left) / repulsionRange).floor(),
+        finishX: ((rectangle.right - rootBounds.left) / repulsionRange).floor(),
+        startY: ((rectangle.top - rootBounds.top) / repulsionRange).floor(),
+        finishY: ((rectangle.bottom - rootBounds.top) / repulsionRange).floor(),
+      );
+      coordinates[node.id] = coordinate;
+      for (var x = coordinate.startX; x <= coordinate.finishX; x++) {
+        for (var y = coordinate.startY; y <= coordinate.finishY; y++) {
+          grid[x][y]++;
+        }
+      }
+    }
+
+    for (final pruned in round) {
+      final connector = rectangles[pruned.otherId]!;
+      final coordinate = coordinates[pruned.otherId]!;
+      final regions = List<int>.filled(4, 0);
+      if (coordinate.startY > 0) {
+        for (var x = coordinate.startX; x <= coordinate.finishX; x++) {
+          regions[0] += grid[x][coordinate.startY - 1] + grid[x][coordinate.startY] - 1;
+        }
+      }
+      if (coordinate.finishX < sizeX - 1) {
+        for (var y = coordinate.startY; y <= coordinate.finishY; y++) {
+          regions[1] += grid[coordinate.finishX + 1][y] + grid[coordinate.finishX][y] - 1;
+        }
+      }
+      if (coordinate.finishY < sizeY - 1) {
+        for (var x = coordinate.startX; x <= coordinate.finishX; x++) {
+          regions[2] += grid[x][coordinate.finishY + 1] + grid[x][coordinate.finishY] - 1;
+        }
+      }
+      if (coordinate.startX > 0) {
+        for (var y = coordinate.startY; y <= coordinate.finishY; y++) {
+          regions[3] += grid[coordinate.startX - 1][y] + grid[coordinate.startX][y] - 1;
+        }
+      }
+      final direction = _sparseTreeDirection(regions, random);
+      positions[pruned.node.id] = switch (direction) {
+        0 => Offset(connector.center.x, connector.top - treePlacementEdgeLength - pruned.node.height / 2),
+        1 => Offset(connector.right + treePlacementEdgeLength + pruned.node.width / 2, connector.center.y),
+        2 => Offset(connector.center.x, connector.bottom + treePlacementEdgeLength + pruned.node.height / 2),
+        _ => Offset(connector.left - treePlacementEdgeLength - pruned.node.width / 2, connector.center.y),
+      };
+    }
+  }
+
+  int _sparseTreeDirection(List<int> regions, Xorshift32 random) {
+    final minimum = regions.reduce(math.min);
+    final minima = [
+      for (var index = 0; index < regions.length; index++)
+        if (regions[index] == minimum) index,
+    ];
+    if (minimum != 0) return minima.first;
+    return switch (minima) {
+      [0, 1, 2] => 1,
+      [0, 1, 3] => 0,
+      [0, 2, 3] => 3,
+      [1, 2, 3] => 2,
+      [final first, final second] => random.nextInt(2) == 0 ? first : second,
+      [0, 1, 2, 3] => random.nextInt(4),
+      _ => minima.first,
+    };
   }
 
   List<(FcoseNode, FcoseNode)> _refreshRepulsionPairs(
@@ -732,6 +942,12 @@ const _minimumSpringComponentLength = 1.0;
 /// layout-base's FR grid rebuilds each node's surrounding set every ten ticks.
 const _repulsionGridRefreshPeriod = 10;
 
+/// cose-base restores one tree-pruning layer every ten spring ticks.
+const _treeGrowthStepIterations = 10;
+
+/// cose-base linearly cools for at most one hundred ticks after tree regrowth.
+const _postGrowthIterations = 100;
+
 /// layout-base `FDLayoutConstants.CONVERGENCE_CHECK_PERIOD`, in iterations.
 const _convergenceCheckPeriod = 100;
 
@@ -741,6 +957,95 @@ const _layoutBaseGraphMargin = 15.0;
 /// layout-base `FDLayout.initSpringEmbedder()` runs at least five iterations
 /// per CoSE node, even when the configured maximum is smaller.
 const _minimumIterationsPerNode = 5;
+
+final class _SpringPhaseResult {
+  const _SpringPhaseResult(
+    this.iterations,
+    this.totalDisplacement,
+    this.totalDisplacementThreshold,
+    this.oldTotalDisplacement,
+    this.iterationLimit,
+  );
+
+  final int iterations;
+  final double totalDisplacement;
+  final double totalDisplacementThreshold;
+  final double oldTotalDisplacement;
+  final int iterationLimit;
+}
+
+final class _PrunedNode {
+  const _PrunedNode({required this.node, required this.edge, required this.otherId, required this.relativeOffset});
+
+  final FcoseNode node;
+  final FcoseEdge edge;
+  final String otherId;
+  final Offset relativeOffset;
+
+  String get nodeId => node.id;
+}
+
+final class _TreeReduction {
+  const _TreeReduction._(this.source, this.coreNodeIds, this.rounds);
+
+  factory _TreeReduction.create(_WorkingGraph source, Map<String, Offset> positions) {
+    final active = source.graph.nodes.map((node) => node.id).toSet();
+    final incidentEdges = <String, List<FcoseEdge>>{for (final id in active) id: []};
+    for (final edge in source.edges) {
+      incidentEdges[edge.source]!.add(edge);
+      incidentEdges[edge.target]!.add(edge);
+    }
+    final leafIds = source.leaves.map((node) => node.id).toSet();
+    final rectangles = source.compounds.rectangles(positions, padding: 0);
+    final rounds = <List<_PrunedNode>>[];
+
+    while (true) {
+      final candidates = <FcoseNode>[];
+      for (final node in source.graph.nodes) {
+        if (!active.contains(node.id) || !leafIds.contains(node.id)) continue;
+        final edges = incidentEdges[node.id]!;
+        if (edges.length != 1) continue;
+        final edge = edges.single;
+        if (source.compounds.ownerOf(edge.source) == source.compounds.ownerOf(edge.target)) {
+          candidates.add(node);
+        }
+      }
+      if (candidates.isEmpty) break;
+
+      final round = <_PrunedNode>[];
+      for (final node in candidates) {
+        final edges = incidentEdges[node.id]!;
+        if (edges.length != 1) continue;
+        final edge = edges.single;
+        final otherId = edge.source == node.id ? edge.target : edge.source;
+        round.add(
+          _PrunedNode(
+            node: node,
+            edge: edge,
+            otherId: otherId,
+            relativeOffset: rectangles[node.id]!.center - rectangles[otherId]!.center,
+          ),
+        );
+        active.remove(node.id);
+        incidentEdges[node.id]!.clear();
+        incidentEdges[otherId]!.remove(edge);
+      }
+      if (round.isEmpty) break;
+      rounds.add(List.unmodifiable(round));
+    }
+
+    return _TreeReduction._(source, Set.unmodifiable(active), List.unmodifiable(rounds));
+  }
+
+  final _WorkingGraph source;
+  final Set<String> coreNodeIds;
+  final List<List<_PrunedNode>> rounds;
+
+  FcoseGraph activeGraph(Set<String> activeNodeIds) => FcoseGraph(
+    nodes: source.graph.nodes.where((node) => activeNodeIds.contains(node.id)),
+    edges: source.edges.where((edge) => activeNodeIds.contains(edge.source) && activeNodeIds.contains(edge.target)),
+  );
+}
 
 final class _TiledOrganization {
   const _TiledOrganization({required this.positions, required this.center, required this.width, required this.height});

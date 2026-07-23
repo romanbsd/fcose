@@ -737,6 +737,95 @@ void main() {
       expect(result.positionOf('c').y, closeTo(300.8639688325547, 1e-9));
     });
 
+    test('matches upstream tree reduction, regrowth, and post-growth cooling', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 20,
+              tile: false,
+              idealEdgeLength: 120,
+              edgeElasticity: 0.45,
+              nodeRepulsion: 4500,
+              gravity: 0.25,
+              gravityRange: 3.8,
+              initialEnergyOnIncremental: 0.3,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80, position: Offset(0, 0)),
+                FcoseNode(id: 'b', width: 80, height: 80, position: Offset(200, 0)),
+                FcoseNode(id: 'c', width: 80, height: 80, position: Offset(100, 180)),
+                FcoseNode(id: 'd', width: 80, height: 80, position: Offset(300, 0)),
+                FcoseNode(id: 'e', width: 80, height: 80, position: Offset(400, 0)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+                FcoseEdge(id: 'ca', source: 'c', target: 'a'),
+                FcoseEdge(id: 'bd', source: 'b', target: 'd'),
+                FcoseEdge(id: 'de', source: 'd', target: 'e'),
+              ],
+            ),
+          );
+
+      expect(result.iterations, 40);
+      // Direct cose-base output before cytoscape-fcose's renderer relocation.
+      // Repeated nonlinear ticks differ slightly between JavaScript and Dart,
+      // but every completed center remains within a third of a logical pixel.
+      expect(result.positionOf('a').x, closeTo(-22.580760794102254, 0.3));
+      expect(result.positionOf('a').y, closeTo(1.1982125902694278, 0.3));
+      expect(result.positionOf('b').x, closeTo(158.4767465117048, 0.3));
+      expect(result.positionOf('b').y, closeTo(-6.613846539817089, 0.3));
+      expect(result.positionOf('c').x, closeTo(96.26520854371415, 0.3));
+      expect(result.positionOf('c').y, closeTo(185.7875863654262, 0.3));
+      expect(result.positionOf('d').x, closeTo(323.0063977757626, 0.3));
+      expect(result.positionOf('d').y, closeTo(-1.3153448560261296, 0.3));
+      expect(result.positionOf('e').x, closeTo(487.40026951310483, 0.3));
+      expect(result.positionOf('e').y, closeTo(-3.9655620530495312, 0.3));
+    });
+
+    test('runs upstream post-growth cooling until the regrown tree converges', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 20,
+              tile: false,
+              idealEdgeLength: 120,
+              edgeElasticity: 0.45,
+              nodeRepulsion: 4500,
+              gravity: 0.25,
+              gravityRange: 3.8,
+              initialEnergyOnIncremental: 0.3,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80, position: Offset(0, 0)),
+                FcoseNode(id: 'b', width: 80, height: 80, position: Offset(200, 0)),
+                FcoseNode(id: 'c', width: 80, height: 80, position: Offset(100, 180)),
+                FcoseNode(id: 'd', width: 80, height: 80, position: Offset(1000, 0)),
+                FcoseNode(id: 'e', width: 80, height: 80, position: Offset(2000, 0)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+                FcoseEdge(id: 'ca', source: 'c', target: 'a'),
+                FcoseEdge(id: 'bd', source: 'b', target: 'd'),
+                FcoseEdge(id: 'de', source: 'd', target: 'e'),
+              ],
+            ),
+          );
+
+      expect(result.iterations, 41);
+      expect(result.positionOf('d').x, closeTo(1006.6076986228201, 0.5));
+      expect(result.positionOf('e').x, closeTo(1685.3713349584318, 0.5));
+    });
+
     test('default quality uses cytoscape-fcose fast cooling', () {
       final result =
           FcoseLayout(

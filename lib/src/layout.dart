@@ -432,8 +432,17 @@ final class _WorkingGraph {
     : nodeById = graph.nodeById,
       leaves = List.unmodifiable(graph.leafNodes),
       compounds = CompoundGraphManager(graph) {
+    final seenPairs = <(String, String)>{};
+    edges = List.unmodifiable([
+      for (final edge in graph.edges)
+        if (edge.source != edge.target &&
+            seenPairs.add(
+              edge.source.compareTo(edge.target) <= 0 ? (edge.source, edge.target) : (edge.target, edge.source),
+            ))
+          edge,
+    ]);
     adjacency = {for (final node in leaves) node.id: <String>{}};
-    for (final edge in graph.edges) {
+    for (final edge in edges) {
       final source = representative(edge.source);
       final target = representative(edge.target);
       if (source != target) {
@@ -448,7 +457,7 @@ final class _WorkingGraph {
   final CompoundGraphManager compounds;
   final Map<String, FcoseNode> nodeById;
   final List<FcoseNode> leaves;
-  List<FcoseEdge> get edges => graph.edges;
+  late final List<FcoseEdge> edges;
   late final Map<String, Set<String>> adjacency;
   late final List<List<String>> components;
   final Map<String, String> _representatives = {};

@@ -393,6 +393,32 @@ void main() {
       expect(first.iterations, inInclusiveRange(1, options.maxIterations));
     });
 
+    test('uses only the first spring between a node pair like cytoscape-fcose', () {
+      FcoseResult run(List<FcoseEdge> edges) =>
+          FcoseLayout(
+            options: const FcoseOptions(quality: LayoutQuality.proof, randomize: false, maxIterations: 1000),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'b', width: 80, height: 80, position: Offset(300, 0)),
+              ],
+              edges: edges,
+            ),
+          );
+
+      final firstEdge = const FcoseEdge(id: 'first', source: 'a', target: 'b', idealLength: 120, elasticity: 0.45);
+      final single = run([firstEdge]);
+      final parallel = run([
+        firstEdge,
+        const FcoseEdge(id: 'ignored', source: 'b', target: 'a', idealLength: 400, elasticity: 2),
+        const FcoseEdge(id: 'self-loop', source: 'a', target: 'a', idealLength: 1000, elasticity: 10),
+      ]);
+
+      expect(parallel.positions, single.positions);
+      expect(parallel.iterations, single.iterations);
+    });
+
     test('packs disconnected components without overlap', () {
       final result = FcoseLayout(options: const FcoseOptions(seed: 3, maxIterations: 200)).run(
         FcoseGraph(

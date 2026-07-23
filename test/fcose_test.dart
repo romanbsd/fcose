@@ -95,6 +95,7 @@ void main() {
       expect(manager.isOwnerConnected('root'), isFalse);
       expect(manager.estimatedSizeOf('a'), 20);
       expect(manager.estimatedSizeOf('left'), 20);
+      expect(manager.layoutOrder.map((node) => node.id), ['root', 'left', 'right', 'a', 'b']);
 
       final connected = CompoundGraphManager(
         FcoseGraph(
@@ -103,6 +104,8 @@ void main() {
         ),
       );
       expect(connected.isOwnerConnected('root'), isTrue);
+      expect(manager.estimatedSizeOfOwner('left'), 20);
+      expect(manager.estimatedSizeOfOwner('root'), closeTo(20 * 2 / 1.4142135623730951, 1e-12));
     });
 
     test('updates compound bounds and propagates displacement', () {
@@ -298,21 +301,24 @@ void main() {
       expect(positions['free'], const Offset(190, 0));
     });
 
-    test('rejects overlapping alignment sets on one axis', () {
-      expect(
-        () => ConstraintHandler(
-          fixedNodes: [],
-          alignment: AlignmentConstraint(
-            vertical: [
-              ['a', 'b'],
-              ['b', 'c'],
-            ],
-          ),
-          relativePlacements: [],
-          defaultGap: 50,
-        ).enforce(<String, Offset>{'a': const Offset(0, 0), 'b': const Offset(10, 0), 'c': const Offset(20, 0)}),
-        throwsArgumentError,
-      );
+    test('enforces overlapping alignment sets sequentially like cose-base', () {
+      final positions = <String, Offset>{'a': const Offset(0, 0), 'b': const Offset(10, 0), 'c': const Offset(20, 0)};
+
+      ConstraintHandler(
+        fixedNodes: [],
+        alignment: AlignmentConstraint(
+          vertical: [
+            ['a', 'b'],
+            ['b', 'c'],
+          ],
+        ),
+        relativePlacements: [],
+        defaultGap: 50,
+      ).enforce(positions);
+
+      expect(positions['a']!.x, 5);
+      expect(positions['b']!.x, 12.5);
+      expect(positions['c']!.x, 12.5);
     });
 
     test('rejects a positive relative gap inside an alignment group', () {
@@ -651,6 +657,170 @@ void main() {
       );
     });
 
+    test('Mermaid adapter matches upstream deep Azure constraints and first pass', () {
+      final configuration =
+          const MermaidFcoseAdapter(
+            iconSize: 80,
+            idealEdgeLengthMultiplier: 1.5,
+            edgeElasticity: 0.45,
+          ).configureArchitecture(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'sub1'),
+                FcoseNode(id: 'vnet1', parentId: 'sub1'),
+                FcoseNode(id: 'sub2'),
+                FcoseNode(id: 'shared', parentId: 'sub2'),
+                FcoseNode(id: 'env', parentId: 'sub2'),
+                FcoseNode(id: 'vnet', parentId: 'env'),
+                FcoseNode(id: 'snet1', parentId: 'vnet'),
+                FcoseNode(id: 'snet2', parentId: 'vnet'),
+                FcoseNode(id: 'vm1', parentId: 'vnet1', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'reg', parentId: 'shared', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'nsg', parentId: 'snet1', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'asp', parentId: 'snet1', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'web', parentId: 'snet1', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'pe1', parentId: 'snet2', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'pe2', parentId: 'snet2', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'storage', parentId: 'env', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'container', parentId: 'env', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'bus', parentId: 'env', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'dns', parentId: 'env', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'client', width: 80, height: 80, position: Offset.zero),
+              ],
+              edges: const [
+                FcoseEdge(id: 'reg-web', source: 'reg', target: 'web'),
+                FcoseEdge(id: 'nsg-asp', source: 'nsg', target: 'asp'),
+                FcoseEdge(id: 'asp-web', source: 'asp', target: 'web'),
+                FcoseEdge(id: 'web-pe1', source: 'web', target: 'pe1'),
+                FcoseEdge(id: 'pe1-storage', source: 'pe1', target: 'storage'),
+                FcoseEdge(id: 'storage-container', source: 'storage', target: 'container'),
+                FcoseEdge(id: 'web-pe2', source: 'web', target: 'pe2'),
+                FcoseEdge(id: 'pe2-bus', source: 'pe2', target: 'bus'),
+                FcoseEdge(id: 'vm1-pe2', source: 'vm1', target: 'pe2'),
+              ],
+            ),
+            directionalEdges: const [
+              MermaidDirectionalEdge(
+                source: 'reg',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'web',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'nsg',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'asp',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'asp',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'web',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'web',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'pe1',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'pe1',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'storage',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'storage',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'container',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'web',
+                sourceDirection: MermaidArchitectureDirection.bottom,
+                target: 'pe2',
+                targetDirection: MermaidArchitectureDirection.top,
+              ),
+              MermaidDirectionalEdge(
+                source: 'pe2',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'bus',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+              MermaidDirectionalEdge(
+                source: 'vm1',
+                sourceDirection: MermaidArchitectureDirection.right,
+                target: 'pe2',
+                targetDirection: MermaidArchitectureDirection.left,
+              ),
+            ],
+          );
+
+      expect(configuration.options.alignment.horizontal, [
+        ['vm1', 'pe2', 'pe2', 'bus', 'container'],
+        ['pe1', 'storage'],
+        ['bus', 'container'],
+        ['web', 'asp', 'nsg'],
+        ['web', 'asp', 'nsg'],
+      ]);
+      expect(configuration.options.alignment.vertical, [
+        ['pe2', 'web', 'web', 'reg'],
+        ['storage', 'container'],
+      ]);
+      expect(configuration.options.relativePlacements, hasLength(16));
+
+      final result = FcoseLayout(options: configuration.options).run(configuration.graph);
+      // cytoscape-fcose 2.2.0 with Cytoscape 3.34.0, after Mermaid adds
+      // all nodes to its already-created empty grid layout.
+      expect(result.iterations, 1000);
+      expect(
+        [
+          result.positionOf('web').x - result.positionOf('nsg').x,
+          result.positionOf('web').x - result.positionOf('asp').x,
+          result.positionOf('web').y - result.positionOf('reg').y,
+          result.positionOf('pe2').y - result.positionOf('web').y,
+          result.positionOf('pe1').x - result.positionOf('web').x,
+          result.positionOf('pe1').y - result.positionOf('web').y,
+          result.positionOf('vm1').x - result.positionOf('web').x,
+        ],
+        [
+          closeTo(420.05880231197216, 1e-9),
+          closeTo(212.93310596128777, 1e-9),
+          closeTo(374.8102421714325, 1e-9),
+          closeTo(444.2823168444546, 1e-9),
+          closeTo(120.00000000000045, 1e-9),
+          closeTo(200.47482026832745, 1e-9),
+          closeTo(-776.9988930498603, 1e-9),
+        ],
+      );
+      final second = configuration.runMermaidArchitecture();
+      // The same upstream harness run twice in sequence, as Mermaid does.
+      // The remaining sub-4px drift comes from Cytoscape feeding label-aware
+      // compound dimensions into pass two; the pure graph model does not yet
+      // carry renderer label bounds.
+      expect(
+        [
+          second.positionOf('web').x - second.positionOf('nsg').x,
+          second.positionOf('web').x - second.positionOf('asp').x,
+          second.positionOf('web').y - second.positionOf('reg').y,
+          second.positionOf('pe2').y - second.positionOf('web').y,
+          second.positionOf('pe1').x - second.positionOf('web').x,
+          second.positionOf('pe1').y - second.positionOf('web').y,
+          second.positionOf('vm1').x - second.positionOf('web').x,
+        ],
+        [
+          closeTo(441.7933154561815, 4),
+          closeTo(227.80741633129946, 4),
+          closeTo(332.99465409932236, 4),
+          closeTo(188.59217977970275, 4),
+          closeTo(250.00364483071098, 4),
+          closeTo(256.45039091459694, 4),
+          closeTo(-788.0451198792834, 4),
+        ],
+      );
+    });
+
     test('Mermaid adapter converts spatial maps and align hints to constraints', () {
       final graph = FcoseGraph(
         nodes: const [
@@ -690,6 +860,41 @@ void main() {
       expect(result.positionOf('a').y, closeTo(result.positionOf('b').y, 1e-9));
       expect(result.positionOf('b').x - result.positionOf('a').x, greaterThanOrEqualTo(120));
       expect(result.positionOf('c').y - result.positionOf('b').y, greaterThanOrEqualTo(120));
+    });
+
+    test('Mermaid adapter preserves JavaScript alignment ordering and duplicates', () {
+      final configuration =
+          const MermaidFcoseAdapter(iconSize: 80, idealEdgeLengthMultiplier: 1.5, edgeElasticity: 0.45).configureLayout(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'negative'),
+                FcoseNode(id: 'first'),
+                FcoseNode(id: 'second'),
+                FcoseNode(id: 'third'),
+                FcoseNode(id: 'n1', parentId: 'negative'),
+                FcoseNode(id: 'n2', parentId: 'negative'),
+                FcoseNode(id: 'a', parentId: 'first'),
+                FcoseNode(id: 'b', parentId: 'second'),
+                FcoseNode(id: 'c', parentId: 'third'),
+              ],
+            ),
+            spatialMaps: [
+              {'n1': (x: -2, y: -1), 'n2': (x: -1, y: -1), 'a': (x: 0, y: 0), 'b': (x: 1, y: 0), 'c': (x: 2, y: 0)},
+            ],
+            groupAlignments: const {
+              'first': {'second': MermaidAlignmentDirection.row, 'third': MermaidAlignmentDirection.row},
+              'second': {'first': MermaidAlignmentDirection.row},
+              'third': {'first': MermaidAlignmentDirection.row},
+            },
+          );
+
+      // JavaScript Object.values() emits the non-negative integer key `0`
+      // before the earlier-inserted key `-1`. Mermaid's pairwise flattening
+      // also intentionally repeats `a` when it merges two compatible pairs.
+      expect(configuration.options.alignment.horizontal, [
+        ['a', 'b', 'a', 'c'],
+        ['n1', 'n2'],
+      ]);
     });
 
     test('Mermaid adapter infers row and column alignment from a spatial map', () {

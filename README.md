@@ -63,6 +63,15 @@ final result = FcoseLayout(
 );
 ```
 
+The adapter now reproduces Mermaid's directional spatial maps, pairwise
+alignment flattening, duplicate constraints, and JavaScript object-key ordering.
+Its first pass matches the browser-backed Mermaid 11.16 deep-compound fixture
+exactly. Full second-pass parity is still in progress: Cytoscape expands
+compound bounds using child label boxes between passes, while `FcoseNode`
+currently carries only the force rectangle. The same fixture is within four
+pixels after pass two, but consumers should not claim exact renderer parity
+until label-aware compound bounds are represented.
+
 Renderer-specific ports, labels, SVG paths, and icon placement should be
 computed after layout.
 

@@ -446,16 +446,26 @@ final class ConstraintHandler {
     required bool horizontal,
   }) {
     final relevantConstraints = constraints.toList();
+    double coordinate(Offset point) => horizontal ? point.x : point.y;
+    for (final alignment in alignments) {
+      final fixedMember = alignment.where(fixed.containsKey).firstOrNull;
+      final value = fixedMember == null
+          ? alignment.map((node) => coordinate(positions[node]!)).reduce((a, b) => a + b) / alignment.length
+          : coordinate(fixed[fixedMember]!);
+      for (final node in alignment) {
+        if (fixed.containsKey(node)) continue;
+        final old = positions[node]!;
+        positions[node] = horizontal ? Offset(value, old.y) : Offset(old.x, value);
+      }
+    }
+    if (relevantConstraints.isEmpty) return;
+
     final nodeToGroup = <String, String>{};
     final members = <String, Set<String>>{};
     for (var i = 0; i < alignments.length; i++) {
       final group = '@alignment:$i';
       members[group] = alignments[i].toSet();
       for (final node in alignments[i]) {
-        final previous = nodeToGroup[node];
-        if (previous != null && previous != group) {
-          throw ArgumentError.value(node, 'alignment', 'node appears in overlapping alignment sets');
-        }
         nodeToGroup[node] = group;
       }
     }
@@ -464,7 +474,6 @@ final class ConstraintHandler {
       members.putIfAbsent(groupOf(node), () => {node});
     }
 
-    double coordinate(Offset point) => horizontal ? point.x : point.y;
     final initial = <String, double>{};
     final values = <String, double>{};
     final fixedGroups = <String, double>{};
@@ -473,9 +482,7 @@ final class ConstraintHandler {
       if (fixedCoordinates.length > 1) {
         throw ArgumentError.value(entry.value, 'fixedNodes', 'aligned fixed nodes disagree');
       }
-      final value =
-          fixedCoordinates.firstOrNull ??
-          entry.value.map((node) => coordinate(positions[node]!)).reduce((a, b) => a + b) / entry.value.length;
+      final value = fixedCoordinates.firstOrNull ?? coordinate(positions[entry.value.first]!);
       initial[entry.key] = value;
       values[entry.key] = value;
       if (fixedCoordinates.isNotEmpty) fixedGroups[entry.key] = value;

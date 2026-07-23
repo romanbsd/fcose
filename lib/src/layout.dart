@@ -235,7 +235,7 @@ final class FcoseLayout {
       }
 
       final leafDisplacements = {for (final leaf in graph.leaves) leaf.id: Offset.zero};
-      for (final node in graph.graph.nodes) {
+      for (final node in graph.compounds.layoutOrder) {
         if (fixed.contains(node.id)) continue;
         final position = rectangles[node.id]!.center;
         final owner = graph.compounds.ownerOf(node.id);
@@ -245,7 +245,7 @@ final class FcoseLayout {
           final ownerCenter = ownerBounds.center;
           final distance = position - ownerCenter;
           final rangeFactor = owner == null ? options.gravityRange : options.compoundGravityRange;
-          final estimatedSize = math.max(ownerBounds.width, ownerBounds.height);
+          final estimatedSize = graph.compounds.estimatedSizeOfOwner(owner);
           final nodeRect = rectangles[node.id]!;
           if (distance.x.abs() + nodeRect.width / 2 > estimatedSize * rangeFactor ||
               distance.y.abs() + nodeRect.height / 2 > estimatedSize * rangeFactor) {
@@ -259,19 +259,25 @@ final class FcoseLayout {
         // forces on the ancestor only gently move its unfixed descendants.
         final movementWeight = fixedDescendantCount == 0 ? descendants.length : fixedDescendantCount * 100;
         var displacement = (forces[node.id]! + gravityForce) * (coolingFactor / movementWeight);
+        if (!graph.compounds.isCompound(node.id)) {
+          displacement += leafDisplacements[node.id]!;
+        }
         final displacementLimit = coolingFactor * 100;
         displacement = Offset(
           displacement.x.clamp(-displacementLimit, displacementLimit),
           displacement.y.clamp(-displacementLimit, displacementLimit),
         );
-        // CoSENode first accumulates every compound displacement into its
-        // descendant leaves; only leaf nodes are moved in the subsequent move
-        // phase. Keeping these phases separate also makes every gravity force
-        // use the same iteration geometry.
-        for (final leaf in descendants) {
-          if (!fixed.contains(leaf)) {
-            leafDisplacements[leaf] = leafDisplacements[leaf]! + displacement;
+        // CoSENode visits owner graphs in LGraphManager order. Each compound
+        // first contributes to its descendant leaves; when a leaf is reached,
+        // its accumulated ancestor and local displacement are clamped together.
+        if (graph.compounds.isCompound(node.id)) {
+          for (final leaf in descendants) {
+            if (!fixed.contains(leaf)) {
+              leafDisplacements[leaf] = leafDisplacements[leaf]! + displacement;
+            }
           }
+        } else {
+          leafDisplacements[node.id] = displacement;
         }
       }
       totalDisplacement = 0;
@@ -360,9 +366,11 @@ final class FcoseLayout {
       final outgoing = <String, Set<String>>{};
       final indegree = <String, int>{};
       for (final edge in edges) {
-        outgoing.putIfAbsent(edge.first, () => {}).add(edge.second);
+        final isNewEdge = outgoing.putIfAbsent(edge.first, () => {}).add(edge.second);
         indegree.putIfAbsent(edge.first, () => 0);
-        indegree[edge.second] = (indegree[edge.second] ?? 0) + 1;
+        if (isNewEdge) {
+          indegree[edge.second] = (indegree[edge.second] ?? 0) + 1;
+        }
       }
       final queue = Queue<String>()..addAll(indegree.keys.where((id) => indegree[id] == 0));
       var visited = 0;

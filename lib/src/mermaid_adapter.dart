@@ -253,39 +253,49 @@ final class MermaidFcoseAdapter {
     MermaidAlignmentDirection direction,
     MermaidGroupAlignments groupAlignments,
   ) {
-    final result = <List<String>>[];
-    for (final groups in byCoordinate.values) {
+    // Mermaid accumulates these in a plain JavaScript object. Preserve both
+    // replacement/insertion semantics and Object.values() key ordering: array
+    // index coordinates first in ascending order, then all other keys in
+    // insertion order.
+    final flattened = <String, List<String>>{};
+    for (final MapEntry(key: coordinate, value: groups) in byCoordinate.entries) {
+      final coordinateKey = '$coordinate';
       final entries = groups.entries.toList();
       if (entries.length == 1) {
-        if (entries.single.value.length > 1) result.add(List.of(entries.single.value));
+        flattened[coordinateKey] = List.of(entries.single.value);
         continue;
       }
-      final merged = <String>[];
-      final separate = <String, List<String>>{};
+      var count = 0;
       for (var first = 0; first < entries.length - 1; first++) {
         for (var second = first + 1; second < entries.length; second++) {
           final a = entries[first];
           final b = entries[second];
           final compatible =
-              a.key == _defaultGroup ||
-              b.key == _defaultGroup ||
-              groupAlignments[a.key]?[b.key] == direction ||
-              groupAlignments[b.key]?[a.key] == direction;
+              a.key == _defaultGroup || b.key == _defaultGroup || groupAlignments[a.key]?[b.key] == direction;
           if (compatible) {
-            merged
-              ..addAll(a.value)
-              ..addAll(b.value);
+            flattened[coordinateKey] = [...?flattened[coordinateKey], ...a.value, ...b.value];
           } else {
-            separate
-              ..putIfAbsent(a.key, () => a.value)
-              ..putIfAbsent(b.key, () => b.value);
+            flattened['$coordinate-$count'] = List.of(a.value);
+            count++;
+            flattened['$coordinate-$count'] = List.of(b.value);
+            count++;
           }
         }
       }
-      if (merged.isNotEmpty) result.add(merged.toSet().toList());
-      result.addAll(separate.values.where((group) => group.length > 1).map(List.of));
     }
-    return result;
+
+    final arrayIndexes = <({int index, List<String> value})>[];
+    final otherValues = <List<String>>[];
+    for (final MapEntry(key: key, value: value) in flattened.entries) {
+      final index = int.tryParse(key);
+      if (index != null && index >= 0 && index <= _maximumJavaScriptArrayIndex && '$index' == key) {
+        arrayIndexes.add((index: index, value: value));
+      } else {
+        otherValues.add(value);
+      }
+    }
+    arrayIndexes.sort((first, second) => first.index.compareTo(second.index));
+    return [...arrayIndexes.map((entry) => entry.value), ...otherValues].where((group) => group.length > 1).toList();
   }
 
   List<RelativePlacementConstraint> _relativeConstraints(
@@ -317,7 +327,10 @@ final class MermaidFcoseAdapter {
       final visited = <({int x, int y})>{};
       while (queue.isNotEmpty) {
         final current = queue.removeAt(0);
-        if (!visited.add(current)) continue;
+        // Mermaid processes duplicate queue entries again. The visited map
+        // prevents new back-edges from being queued, but does not skip an
+        // already-queued coordinate when it is later removed.
+        visited.add(current);
         final currentId = inverse[current];
         if (currentId == null) continue;
         for (final (dx, dy) in shifts) {
@@ -341,6 +354,9 @@ final class MermaidFcoseAdapter {
 }
 
 const _defaultGroup = 'default';
+
+/// Largest key ordered as an array index by JavaScript's Object.values().
+const _maximumJavaScriptArrayIndex = 0xfffffffe;
 
 final class _DirectionPair {
   const _DirectionPair(this.source, this.target);

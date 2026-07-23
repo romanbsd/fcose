@@ -51,6 +51,22 @@ final class CompoundGraphManager {
 
   bool isCompound(String nodeId) => graph.childrenByParent[nodeId]?.isNotEmpty ?? false;
 
+  /// Nodes in layout-base `LGraphManager.getAllNodes()` order.
+  ///
+  /// Each owner graph contributes all of its direct children before child
+  /// graphs are visited in compound-node order.
+  Iterable<FcoseNode> get layoutOrder sync* {
+    Iterable<FcoseNode> visit(String? ownerId) sync* {
+      final children = graph.childrenByParent[ownerId] ?? const [];
+      yield* children;
+      for (final child in children.where((node) => isCompound(node.id))) {
+        yield* visit(child.id);
+      }
+    }
+
+    yield* visit(null);
+  }
+
   /// Static size estimate used by layout-base's smart inter-graph edge
   /// lengths. Leaf size is mean width/height; a compound is the sum of its
   /// children's estimates divided by the square root of its child count.
@@ -62,6 +78,15 @@ final class CompoundGraphManager {
     }
     final sum = children.fold(0.0, (value, child) => value + estimatedSizeOf(child.id));
     return sum / math.sqrt(children.length);
+  }
+
+  /// Static size estimate of an owner graph, matching
+  /// layout-base's `LGraph.calcEstimatedSize`.
+  double estimatedSizeOfOwner(String? ownerId) {
+    final children = graph.childrenByParent[ownerId] ?? const [];
+    if (children.isEmpty) return _emptyCompoundNodeSize;
+    final sum = children.fold(0.0, (value, child) => value + estimatedSizeOf(child.id));
+    return sum == 0 ? _emptyCompoundNodeSize : sum / math.sqrt(children.length);
   }
 
   bool isOwnerConnected(String? ownerId) {
@@ -141,3 +166,6 @@ final class CompoundGraphManager {
     return result;
   }
 }
+
+/// layout-base `LayoutConstants.EMPTY_COMPOUND_NODE_SIZE`, in pixels.
+const _emptyCompoundNodeSize = 40.0;

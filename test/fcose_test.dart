@@ -39,6 +39,19 @@ void main() {
         throwsArgumentError,
       );
     });
+
+    test('keeps derived graph indexes deeply immutable', () {
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'parent'),
+          FcoseNode(id: 'child', parentId: 'parent'),
+        ],
+      );
+
+      expect(() => graph.nodeById['other'] = const FcoseNode(id: 'other'), throwsUnsupportedError);
+      expect(() => graph.childrenByParent['parent'] = const [], throwsUnsupportedError);
+      expect(() => graph.childrenByParent['parent']!.add(const FcoseNode(id: 'other')), throwsUnsupportedError);
+    });
   });
 
   group('layout-base geometry', () {
@@ -948,14 +961,14 @@ void main() {
       expect(result.positionOf('b').y - result.positionOf('a').y, 0);
     });
 
-    test('maps Mermaid architecture layout knobs', () {
-      final options = FcoseOptions.mermaid(
+    test('Mermaid adapter maps architecture layout knobs', () {
+      final options = const MermaidFcoseAdapter(
+        iconSize: 40,
         nodeSeparation: 90,
         idealEdgeLengthMultiplier: 1.5,
-        baseIdealEdgeLength: 40,
         edgeElasticity: 0.7,
         numIter: 321,
-      );
+      ).options;
       expect(options.quality, LayoutQuality.proof);
       expect(options.randomize, isFalse);
       expect(options.nodeSeparation, 90);

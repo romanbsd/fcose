@@ -62,14 +62,16 @@ final class FcoseGraph {
   final List<FcoseNode> nodes;
   final List<FcoseEdge> edges;
 
-  late final Map<String, FcoseNode> nodeById = {for (final node in nodes) node.id: node};
+  late final Map<String, FcoseNode> nodeById = Map.unmodifiable({for (final node in nodes) node.id: node});
 
   late final Map<String?, List<FcoseNode>> childrenByParent = () {
     final result = <String?, List<FcoseNode>>{};
     for (final node in nodes) {
       (result[node.parentId] ??= []).add(node);
     }
-    return result;
+    return Map<String?, List<FcoseNode>>.unmodifiable({
+      for (final entry in result.entries) entry.key: List<FcoseNode>.unmodifiable(entry.value),
+    });
   }();
 
   late final List<FcoseNode> leafNodes = List.unmodifiable(

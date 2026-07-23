@@ -35,27 +35,6 @@ final class FcoseOptions {
     this.relativePlacements = const [],
   });
 
-  /// Creates options from the fCoSE knobs exposed by Mermaid architecture
-  /// diagrams. [baseIdealEdgeLength] is Mermaid's measured/default edge length
-  /// before applying [idealEdgeLengthMultiplier].
-  factory FcoseOptions.mermaid({
-    bool randomize = false,
-    double nodeSeparation = 75,
-    double idealEdgeLengthMultiplier = 1,
-    double baseIdealEdgeLength = 50,
-    double edgeElasticity = 0.45,
-    int numIter = 2500,
-    int seed = 1,
-  }) => FcoseOptions(
-    quality: LayoutQuality.proof,
-    randomize: randomize,
-    nodeSeparation: nodeSeparation,
-    idealEdgeLength: baseIdealEdgeLength * idealEdgeLengthMultiplier,
-    edgeElasticity: edgeElasticity,
-    maxIterations: numIter,
-    seed: seed,
-  );
-
   final LayoutQuality quality;
   final bool randomize;
   final int seed;

@@ -77,8 +77,20 @@ row/column constraints, cross-group springs, and Mermaid's deep Azure fixture.
 Most fixtures use `1e-9` tolerances; repeated nonlinear spring accumulation
 stays within `5e-5` pixels across JavaScript and Dart floating-point runtimes.
 
+These package-level fixtures begin with measured graph geometry and end with
+layout rectangles. Before a consuming Mermaid renderer removes specialized
+architecture positioning, it must add an end-to-end parity test covering its
+parser AST, exact text/icon measurement, fCoSE adapter, edge routing, and final
+SVG output against Mermaid.js.
+
 Renderer-specific ports, labels, SVG paths, and icon placement should be
 computed after layout.
+
+Zero-degree tiling currently matches cose-base only for the implemented
+non-randomized root-level paths. Randomized grouping and nested-owner
+clear/repopulate behavior remain follow-up work. The constrained Mermaid
+architecture fixtures described above do not enter those missing branches;
+architecture cases that do require them need separate parity coverage.
 
 ## Upstream mapping
 

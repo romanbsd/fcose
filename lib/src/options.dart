@@ -2,6 +2,9 @@ import 'constraints.dart';
 
 enum LayoutQuality { draft, defaultQuality, proof }
 
+/// Constraint-pipeline stage exposed by fCoSE for debugging.
+enum LayoutStep { all, transformed, enforced, cose }
+
 enum SamplingType { greedy, random }
 
 enum PackingUtility { adjustedFullness, weighted }
@@ -12,6 +15,7 @@ typedef TilingComparator = int Function(String firstNodeId, String secondNodeId)
 final class FcoseOptions {
   const FcoseOptions({
     this.quality = LayoutQuality.defaultQuality,
+    this.step = LayoutStep.all,
     this.randomize = true,
     this.seed = 1,
     this.maxIterations = 2500,
@@ -46,6 +50,11 @@ final class FcoseOptions {
   });
 
   final LayoutQuality quality;
+
+  /// Selects how far the constraint and CoSE pipeline runs.
+  ///
+  /// Non-[LayoutStep.all] values are upstream-compatible debugging stages.
+  final LayoutStep step;
   final bool randomize;
   final int seed;
   final int maxIterations;

@@ -15,3 +15,7 @@
   `randomize: false`.
 - Add `uniformNodeDimensions` force semantics and custom `tilingCompareBy`
   ordering with upstream-compatible ideal-row-width tiling.
+- Add typed constraint-pipeline debug stages and make draft quality bypass
+  CoSE constraint preprocessing and zero-degree tiling.
+- Recenter non-fixed transformed-stage results to their original graph bounds
+  without perturbing full-layout coordinates.

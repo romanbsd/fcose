@@ -55,15 +55,24 @@ final class FcoseLayout {
 
     final random = Xorshift32(options.seed);
     var working = _WorkingGraph(graph);
-    final originalComponentCenters = _componentCenters(working, {
-      for (final leaf in working.leaves) leaf.id: leaf.position ?? Offset.zero,
-    });
+    final originalGeometry = {for (final leaf in working.leaves) leaf.id: leaf.position ?? Offset.zero};
+    final originalComponentCenters = _componentCenters(working, originalGeometry);
+    final originalBoundsCenter = _graphBounds(working, originalGeometry).center;
     var positions = _initialPositions(working, random);
     final constraintHandler = _constraintHandler;
-    if (options.randomize) {
+    final runsCosePipeline = options.quality != LayoutQuality.draft;
+    final transformsConstraints =
+        runsCosePipeline &&
+        (options.step == LayoutStep.transformed || (options.step == LayoutStep.all && options.randomize));
+    final enforcesConstraints =
+        runsCosePipeline && (options.step == LayoutStep.all || options.step == LayoutStep.enforced);
+    final runsSpringEmbedder = runsCosePipeline && (options.step == LayoutStep.all || options.step == LayoutStep.cose);
+    if (transformsConstraints) {
       constraintHandler.transformInitial(positions);
     }
-    constraintHandler.enforce(positions);
+    if (enforcesConstraints) {
+      constraintHandler.enforce(positions);
+    }
 
     if (_shouldTileFlatZeroDegreeNodes(working)) {
       _tileFlatZeroDegreeNodes(working, positions);
@@ -72,7 +81,7 @@ final class FcoseLayout {
       return FcoseResult(
         positions: positions,
         rectangles: rectangles,
-        iterations: options.quality == LayoutQuality.draft ? 0 : math.min(effectiveMax, _convergenceCheckPeriod),
+        iterations: runsSpringEmbedder ? math.min(effectiveMax, _convergenceCheckPeriod) : 0,
       );
     }
 
@@ -83,7 +92,7 @@ final class FcoseLayout {
     }
 
     var iterations = 0;
-    if (options.quality != LayoutQuality.draft) {
+    if (runsSpringEmbedder) {
       iterations = _runSpringEmbedder(working, positions, constraintHandler, random);
     }
     if (!_hasConstraints && tiling == null) {
@@ -91,6 +100,12 @@ final class FcoseLayout {
         _relocateComponentsToOriginalCenters(working, positions, originalComponentCenters);
       }
       _packComponents(working, positions);
+    }
+    if (options.step == LayoutStep.transformed && _hasConstraints && options.fixedNodes.isEmpty) {
+      final relocation = originalBoundsCenter - _graphBounds(working, positions).center;
+      for (final leaf in working.leaves) {
+        positions[leaf.id] = positions[leaf.id]! + relocation;
+      }
     }
 
     final rectangles = working.compounds.rectangles(positions, padding: options.compoundPadding);
@@ -616,6 +631,7 @@ final class FcoseLayout {
 
   bool _shouldTileFlatZeroDegreeNodes(_WorkingGraph graph) =>
       options.tile &&
+      options.quality != LayoutQuality.draft &&
       !_hasConstraints &&
       graph.edges.isEmpty &&
       graph.graph.nodes.length > 1 &&
@@ -1182,6 +1198,16 @@ final class FcoseLayout {
     while (iterator.moveNext()) {
       final node = iterator.current;
       bounds = bounds.union(Rect.fromCenter(positions[node.id]!, node.width, node.height));
+    }
+    return bounds;
+  }
+
+  Rect _graphBounds(_WorkingGraph graph, Map<String, Offset> positions) {
+    final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
+    final roots = graph.graph.childrenByParent[null]!;
+    var bounds = rectangles[roots.first.id]!;
+    for (final root in roots.skip(1)) {
+      bounds = bounds.union(rectangles[root.id]!);
     }
     return bounds;
   }

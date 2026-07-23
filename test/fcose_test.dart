@@ -1212,6 +1212,132 @@ void main() {
       expect(result.positionOf('c').x - result.positionOf('b').x, greaterThanOrEqualTo(80));
     });
 
+    test('exposes the transformed constraint-debug stage without refinement', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              step: LayoutStep.transformed,
+              alignment: AlignmentConstraint(
+                vertical: [
+                  ['a', 'b'],
+                ],
+              ),
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset.zero),
+                FcoseNode(id: 'b', position: Offset(100, 100)),
+                FcoseNode(id: 'free', position: Offset(100, 0)),
+              ],
+            ),
+          );
+
+      expect(result.iterations, 0);
+      expect(result.positionOf('a').x, closeTo(14.64466094067263, 1e-9));
+      expect(result.positionOf('a').y, closeTo(-20.71067811865474, 1e-9));
+      expect(result.positionOf('b').x, closeTo(14.64466094067263, 1e-9));
+      expect(result.positionOf('b').y, closeTo(120.71067811865474, 1e-9));
+      expect(result.positionOf('free').x, closeTo(85.35533905932738, 1e-9));
+      expect(result.positionOf('free').y, closeTo(50, 1e-9));
+    });
+
+    test('does not apply transformed-stage recentering to the full layout', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 1,
+              nodeRepulsion: 0,
+              gravity: 0,
+              tile: false,
+              packComponents: false,
+              alignment: AlignmentConstraint(
+                vertical: [
+                  ['a', 'b'],
+                ],
+              ),
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset.zero),
+                FcoseNode(id: 'b', position: Offset(100, 100)),
+                FcoseNode(id: 'free', position: Offset(100, 0)),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('a').x, 50);
+      expect(result.positionOf('b').x, 50);
+      expect(result.positionOf('free').x, 100);
+    });
+
+    test('exposes the enforced constraint-debug stage without refinement', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              step: LayoutStep.enforced,
+              fixedNodes: [FixedNodeConstraint('a', Offset(10, 20))],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset.zero),
+                FcoseNode(id: 'b', position: Offset(100, 100)),
+                FcoseNode(id: 'c', position: Offset(200, 20)),
+              ],
+            ),
+          );
+
+      expect(result.iterations, 0);
+      expect(result.positionOf('a'), const Offset(10, 20));
+      expect(result.positionOf('b'), const Offset(110, 120));
+      expect(result.positionOf('c'), const Offset(210, 40));
+    });
+
+    test('starts the CoSE debug stage before constraint preprocessing', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              step: LayoutStep.cose,
+              maxIterations: 20,
+              idealEdgeLength: 80,
+              fixedNodes: [FixedNodeConstraint('a', Offset(10, 20))],
+              alignment: AlignmentConstraint(
+                vertical: [
+                  ['a', 'b'],
+                ],
+              ),
+              relativePlacements: [RelativePlacementConstraint.horizontal('b', 'c', gap: 80)],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset.zero),
+                FcoseNode(id: 'b', position: Offset(100, 100)),
+                FcoseNode(id: 'c', position: Offset(200, 20)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+              ],
+            ),
+          );
+
+      expect(result.iterations, greaterThan(0));
+      expect(result.positionOf('a'), Offset.zero);
+      expect(result.positionOf('b'), isNot(const Offset(100, 100)));
+      expect(result.positions.values.every((position) => position.isFinite), isTrue);
+    });
+
     test('draft quality performs spectral-only layout', () {
       final graph = FcoseGraph(
         nodes: List.generate(6, (i) => FcoseNode(id: '$i')),
@@ -1220,6 +1346,54 @@ void main() {
       final result = FcoseLayout(options: const FcoseOptions(quality: LayoutQuality.draft, seed: 1)).run(graph);
       expect(result.iterations, 0);
       expect(result.positions.values.every((position) => position.isFinite), isTrue);
+    });
+
+    test('draft quality bypasses CoSE constraint preprocessing', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.draft,
+              randomize: false,
+              fixedNodes: [FixedNodeConstraint('a', Offset(10, 20))],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset.zero),
+                FcoseNode(id: 'b', position: Offset(100, 50)),
+              ],
+              edges: const [FcoseEdge(id: 'ab', source: 'a', target: 'b')],
+            ),
+          );
+
+      expect(result.iterations, 0);
+      expect(result.positionOf('a'), Offset.zero);
+      expect(result.positionOf('b'), const Offset(100, 50));
+    });
+
+    test('draft quality bypasses CoSE zero-degree tiling', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.draft,
+              randomize: false,
+              tile: true,
+              packComponents: false,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset(0, 0)),
+                FcoseNode(id: 'b', position: Offset(200, 0)),
+                FcoseNode(id: 'c', position: Offset(0, 200)),
+              ],
+            ),
+          );
+
+      expect(result.iterations, 0);
+      expect(result.positionOf('a'), Offset.zero);
+      expect(result.positionOf('b'), const Offset(200, 0));
+      expect(result.positionOf('c'), const Offset(0, 200));
     });
 
     test('spectrally connects disconnected child components inside a compound', () {

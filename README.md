@@ -77,16 +77,22 @@ distances.
 - bottom-up compound bounds with padding and label geometry;
 - transformed and displacement-relaxed fixed, alignment, and DAG placement
   constraints;
+- upstream constraint interactions that disable tiling and component packing;
+- typed `all`, `transformed`, `enforced`, and `cose` constraint-pipeline
+  stages, transformed-stage bounds recentering, and draft-quality bypass of
+  the CoSE pipeline;
 - typed quality, greedy/random sampling, force, geometry, tiling, and
   constraint options;
 - platform-stable seeded execution on the Dart VM and dart2js.
 
 ## Remaining parity work
 
-The largest known differences from cytoscape-fcose 2.2.0 are:
+The largest remaining parity work is:
 
-- remaining general option semantics such as tiling interactions with placement
-  constraints and debug steps.
+- broader differential coverage for uncommon nested-compound and constraint
+  combinations;
+- adapter semantics for upstream function-valued options where this typed API
+  currently accepts resolved numeric values.
 
 Browser presentation concerns such as animation, viewport fitting, event
 emission, and Cytoscape collection adaptation are intentionally outside this

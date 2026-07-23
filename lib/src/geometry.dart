@@ -76,8 +76,10 @@ final class Rect {
     if (!overlaps(other)) {
       throw ArgumentError.value(other, 'other', 'rectangles must overlap');
     }
-    final directionX = center.x < other.center.x ? -1.0 : 1.0;
-    final directionY = center.y < other.center.y ? -1.0 : 1.0;
+    final sourceCenter = center;
+    final targetCenter = other.center;
+    final directionX = sourceCenter.x < targetCenter.x ? -1.0 : 1.0;
+    final directionY = sourceCenter.y < targetCenter.y ? -1.0 : 1.0;
     var overlapX = math.min(right, other.right) - math.max(left, other.left);
     var overlapY = math.min(bottom, other.bottom) - math.max(top, other.top);
     if (left <= other.left && right >= other.right) {
@@ -91,7 +93,7 @@ final class Rect {
       overlapY += math.min(top - other.top, other.bottom - bottom);
     }
 
-    final centerDelta = other.center - center;
+    final centerDelta = targetCenter - sourceCenter;
     final slope = centerDelta == Offset.zero ? 1.0 : (centerDelta.y / centerDelta.x).abs();
     var moveY = slope * overlapX;
     var moveX = overlapY / slope;

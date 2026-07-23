@@ -3,15 +3,94 @@ import 'dart:math' as math;
 import 'constraints.dart';
 import 'geometry.dart';
 
+/// cose-base reshuffles the final third of relative groups every ten ticks.
+const _constraintShufflePeriod = 10;
+
+List<List<String>> _freezeAlignmentGroups(List<List<String>> groups) =>
+    List.unmodifiable([for (final group in groups) List<String>.unmodifiable(group)]);
+
+final class _RelaxationTopology {
+  _RelaxationTopology(
+    List<List<String>> alignments,
+    List<RelativePlacementConstraint> constraints,
+    Set<String> fixed,
+    double defaultGap,
+  ) {
+    final nodeToGroup = <String, String>{};
+    for (var index = 0; index < alignments.length; index++) {
+      final group = '@alignment:$index';
+      members[group] = alignments[index];
+      for (final node in alignments[index]) {
+        nodeToGroup[node] = group;
+      }
+    }
+    String groupOf(String node) => nodeToGroup[node] ?? node;
+
+    final orderedGroups = <String>{};
+    for (final constraint in constraints) {
+      final source = groupOf(constraint.first);
+      final target = groupOf(constraint.second);
+      members.putIfAbsent(source, () => [constraint.first]);
+      members.putIfAbsent(target, () => [constraint.second]);
+      if (orderedGroups.add(source)) order.add(source);
+      if (orderedGroups.add(target)) order.add(target);
+      final gap = constraint.gap ?? defaultGap;
+      (edges[source] ??= []).add((other: target, gap: gap, outgoing: true));
+      (edges[target] ??= []).add((other: source, gap: gap, outgoing: false));
+    }
+    fixedGroups.addAll(members.entries.where((entry) => entry.value.any(fixed.contains)).map((entry) => entry.key));
+    _ordersByCheckpoint[0] = List.unmodifiable(order);
+  }
+
+  final Map<String, List<String>> members = {};
+  final List<String> order = [];
+  final Map<String, List<({String other, double gap, bool outgoing})>> edges = {};
+  final Set<String> fixedGroups = {};
+  final Map<int, List<String>> _ordersByCheckpoint = {};
+  _Mulberry32? _random;
+  var _latestCheckpoint = 0;
+
+  List<String> orderAt(int iteration, {required int seed, required int precedingLength, required int followingLength}) {
+    if (iteration < _constraintShufflePeriod || order.length < 2) return List.of(order);
+    final targetCheckpoint = iteration ~/ _constraintShufflePeriod * _constraintShufflePeriod;
+    _random ??= _Mulberry32(seed);
+    while (_latestCheckpoint < targetCheckpoint) {
+      final next = List<String>.of(_ordersByCheckpoint[_latestCheckpoint]!);
+      _consumeShuffle(_random!, precedingLength);
+      for (var index = next.length - 1; index >= 2 * next.length / 3; index--) {
+        final swapWith = (_random!.nextDouble() * (index + 1)).floor();
+        final value = next[index];
+        next[index] = next[swapWith];
+        next[swapWith] = value;
+      }
+      _consumeShuffle(_random!, followingLength);
+      _latestCheckpoint += _constraintShufflePeriod;
+      _ordersByCheckpoint[_latestCheckpoint] = List.unmodifiable(next);
+    }
+    return List.of(_ordersByCheckpoint[targetCheckpoint]!);
+  }
+
+  void _consumeShuffle(_Mulberry32 random, int length) {
+    for (var index = length - 1; index >= 2 * length / 3; index--) {
+      random.nextDouble();
+    }
+  }
+}
+
 /// DAG-based enforcement for fCoSE fixed, alignment, and relative constraints.
 final class ConstraintHandler {
   ConstraintHandler({
-    required this.fixedNodes,
-    required this.alignment,
-    required this.relativePlacements,
+    required List<FixedNodeConstraint> fixedNodes,
+    required AlignmentConstraint alignment,
+    required List<RelativePlacementConstraint> relativePlacements,
     required this.defaultGap,
     this.seed = 1,
-  });
+  }) : fixedNodes = List.unmodifiable(fixedNodes),
+       alignment = AlignmentConstraint(
+         vertical: _freezeAlignmentGroups(alignment.vertical),
+         horizontal: _freezeAlignmentGroups(alignment.horizontal),
+       ),
+       relativePlacements = List.unmodifiable(relativePlacements);
 
   final List<FixedNodeConstraint> fixedNodes;
   final AlignmentConstraint alignment;
@@ -20,6 +99,29 @@ final class ConstraintHandler {
   final int seed;
   Map<String, double>? _horizontalTemporary;
   Map<String, double>? _verticalTemporary;
+
+  late final Set<String> _fixedNodeIds = Set.unmodifiable(fixedNodes.map((item) => item.nodeId));
+  late final Map<String, Offset> _fixedPositions = Map.unmodifiable({
+    for (final item in fixedNodes) item.nodeId: item.position,
+  });
+  late final List<RelativePlacementConstraint> _horizontalConstraints = List.unmodifiable(
+    relativePlacements.where((constraint) => constraint.axis == RelativePlacementAxis.horizontal),
+  );
+  late final List<RelativePlacementConstraint> _verticalConstraints = List.unmodifiable(
+    relativePlacements.where((constraint) => constraint.axis == RelativePlacementAxis.vertical),
+  );
+  late final _RelaxationTopology _horizontalRelaxation = _RelaxationTopology(
+    alignment.vertical,
+    _horizontalConstraints,
+    _fixedNodeIds,
+    defaultGap,
+  );
+  late final _RelaxationTopology _verticalRelaxation = _RelaxationTopology(
+    alignment.horizontal,
+    _verticalConstraints,
+    _fixedNodeIds,
+    defaultGap,
+  );
 
   /// Rotates and, when beneficial, reflects a randomized spectral draft toward
   /// its fixed or alignment constraints before those constraints are enforced.
@@ -37,9 +139,8 @@ final class ConstraintHandler {
         target.add(fixed.position);
       }
     } else if (alignment.vertical.isNotEmpty || alignment.horizontal.isNotEmpty) {
-      final fixed = fixedNodes.map((item) => item.nodeId).toSet();
-      _addAlignmentTargets(positions, alignment.vertical, fixed, source, target, horizontal: true);
-      _addAlignmentTargets(positions, alignment.horizontal, fixed, source, target, horizontal: false);
+      _addAlignmentTargets(positions, alignment.vertical, _fixedNodeIds, source, target, horizontal: true);
+      _addAlignmentTargets(positions, alignment.horizontal, _fixedNodeIds, source, target, horizontal: false);
     } else {
       if (!_addRelativePlacementTargets(positions, source, target)) return;
     }
@@ -140,7 +241,7 @@ final class ConstraintHandler {
   }
 
   void enforce(Map<String, Offset> positions) {
-    final fixed = {for (final item in fixedNodes) item.nodeId: item.position};
+    final fixed = _fixedPositions;
     if (fixed.isNotEmpty) {
       var translation = Offset.zero;
       for (final item in fixedNodes) {
@@ -151,20 +252,8 @@ final class ConstraintHandler {
         positions[entry.key] = entry.value + translation;
       }
     }
-    _enforceAxis(
-      positions,
-      fixed,
-      alignment.vertical,
-      relativePlacements.where((constraint) => constraint.axis == RelativePlacementAxis.horizontal),
-      horizontal: true,
-    );
-    _enforceAxis(
-      positions,
-      fixed,
-      alignment.horizontal,
-      relativePlacements.where((constraint) => constraint.axis == RelativePlacementAxis.vertical),
-      horizontal: false,
-    );
+    _enforceAxis(positions, fixed, alignment.vertical, _horizontalConstraints, horizontal: true);
+    _enforceAxis(positions, fixed, alignment.horizontal, _verticalConstraints, horizontal: false);
     for (final item in fixedNodes) {
       positions[item.nodeId] = item.position;
     }
@@ -266,55 +355,27 @@ final class ConstraintHandler {
     Map<String, Offset> displacements, {
     required int iteration,
   }) {
-    final fixed = fixedNodes.map((item) => item.nodeId).toSet();
-    final horizontalConstraints = relativePlacements
-        .where((constraint) => constraint.axis == RelativePlacementAxis.horizontal)
-        .toList();
-    final verticalConstraints = relativePlacements
-        .where((constraint) => constraint.axis == RelativePlacementAxis.vertical)
-        .toList();
-    final horizontalOrderLength = _relativeGroupCount(alignment.vertical, horizontalConstraints);
-    final verticalOrderLength = _relativeGroupCount(alignment.horizontal, verticalConstraints);
-    for (final node in fixed) {
+    for (final node in _fixedNodeIds) {
       displacements[node] = Offset.zero;
     }
-    _averageAlignedDisplacements(displacements, alignment.vertical, fixed, horizontal: true);
-    _averageAlignedDisplacements(displacements, alignment.horizontal, fixed, horizontal: false);
+    _averageAlignedDisplacements(displacements, alignment.vertical, _fixedNodeIds, horizontal: true);
+    _averageAlignedDisplacements(displacements, alignment.horizontal, _fixedNodeIds, horizontal: false);
     _relaxDisplacements(
       positions,
       displacements,
-      alignment.vertical,
-      horizontalConstraints,
-      fixed,
+      _horizontalRelaxation,
       horizontal: true,
       iteration: iteration,
-      followingShuffleLength: verticalOrderLength,
+      followingShuffleLength: _verticalRelaxation.order.length,
     );
     _relaxDisplacements(
       positions,
       displacements,
-      alignment.horizontal,
-      verticalConstraints,
-      fixed,
+      _verticalRelaxation,
       horizontal: false,
       iteration: iteration,
-      precedingShuffleLength: horizontalOrderLength,
+      precedingShuffleLength: _horizontalRelaxation.order.length,
     );
-  }
-
-  int _relativeGroupCount(List<List<String>> alignments, List<RelativePlacementConstraint> constraints) {
-    final nodeToGroup = <String, String>{};
-    for (var index = 0; index < alignments.length; index++) {
-      for (final node in alignments[index]) {
-        nodeToGroup[node] = '@alignment:$index';
-      }
-    }
-    return {
-      for (final constraint in constraints) ...[
-        nodeToGroup[constraint.first] ?? constraint.first,
-        nodeToGroup[constraint.second] ?? constraint.second,
-      ],
-    }.length;
   }
 
   void _averageAlignedDisplacements(
@@ -338,64 +399,34 @@ final class ConstraintHandler {
   void _relaxDisplacements(
     Map<String, Offset> positions,
     Map<String, Offset> displacements,
-    List<List<String>> alignments,
-    Iterable<RelativePlacementConstraint> constraints,
-    Set<String> fixed, {
+    _RelaxationTopology topology, {
     required bool horizontal,
     required int iteration,
     int precedingShuffleLength = 0,
     int followingShuffleLength = 0,
   }) {
-    final relevant = constraints.toList();
-    if (relevant.isEmpty) return;
-    final nodeToGroup = <String, String>{};
-    final members = <String, List<String>>{};
-    for (var index = 0; index < alignments.length; index++) {
-      final group = '@alignment:$index';
-      members[group] = alignments[index];
-      for (final node in alignments[index]) {
-        nodeToGroup[node] = group;
-      }
-    }
-    String groupOf(String node) => nodeToGroup[node] ?? node;
-
-    final order = <String>[];
-    final edges = <String, List<({String other, double gap, bool outgoing})>>{};
-    for (final constraint in relevant) {
-      final source = groupOf(constraint.first);
-      final target = groupOf(constraint.second);
-      members.putIfAbsent(source, () => [constraint.first]);
-      members.putIfAbsent(target, () => [constraint.second]);
-      if (!order.contains(source)) order.add(source);
-      if (!order.contains(target)) order.add(target);
-      final gap = constraint.gap ?? defaultGap;
-      (edges[source] ??= []).add((other: target, gap: gap, outgoing: true));
-      (edges[target] ??= []).add((other: source, gap: gap, outgoing: false));
-    }
-    _applyUpstreamShuffle(
-      order,
+    if (topology.order.isEmpty) return;
+    final order = topology.orderAt(
       iteration,
+      seed: seed,
       precedingLength: precedingShuffleLength,
       followingLength: followingShuffleLength,
     );
     double coordinate(Offset value) => horizontal ? value.x : value.y;
     final temporary =
         (horizontal ? _horizontalTemporary : _verticalTemporary) ??
-        {for (final group in order) group: coordinate(positions[members[group]!.first]!)};
+        {for (final group in order) group: coordinate(positions[topology.members[group]!.first]!)};
     if (horizontal) {
       _horizontalTemporary ??= temporary;
     } else {
       _verticalTemporary ??= temporary;
     }
-    final fixedGroups = {
-      for (final entry in members.entries)
-        if (entry.value.any(fixed.contains)) entry.key,
-    };
-
     for (final group in order) {
-      var displacement = fixedGroups.contains(group) ? 0.0 : coordinate(displacements[members[group]!.first]!);
-      if (!fixedGroups.contains(group)) {
-        for (final edge in edges[group] ?? const []) {
+      var displacement = topology.fixedGroups.contains(group)
+          ? 0.0
+          : coordinate(displacements[topology.members[group]!.first]!);
+      if (!topology.fixedGroups.contains(group)) {
+        for (final edge in topology.edges[group] ?? const []) {
           final difference = edge.outgoing
               ? temporary[edge.other]! - temporary[group]! - displacement
               : temporary[group]! - temporary[edge.other]! + displacement;
@@ -406,36 +437,10 @@ final class ConstraintHandler {
         }
       }
       temporary[group] = temporary[group]! + displacement;
-      for (final node in members[group]!) {
+      for (final node in topology.members[group]!) {
         final old = displacements[node]!;
         displacements[node] = horizontal ? Offset(displacement, old.y) : Offset(old.x, displacement);
       }
-    }
-  }
-
-  void _applyUpstreamShuffle(
-    List<String> order,
-    int iteration, {
-    required int precedingLength,
-    required int followingLength,
-  }) {
-    if (iteration < 10 || order.length < 2) return;
-    final random = _Mulberry32(seed);
-    for (var checkpoint = 10; checkpoint <= iteration; checkpoint += 10) {
-      _consumeShuffle(random, precedingLength);
-      for (var index = order.length - 1; index >= 2 * order.length / 3; index--) {
-        final swapWith = (random.nextDouble() * (index + 1)).floor();
-        final value = order[index];
-        order[index] = order[swapWith];
-        order[swapWith] = value;
-      }
-      _consumeShuffle(random, followingLength);
-    }
-  }
-
-  void _consumeShuffle(_Mulberry32 random, int length) {
-    for (var index = length - 1; index >= 2 * length / 3; index--) {
-      random.nextDouble();
     }
   }
 
@@ -443,10 +448,9 @@ final class ConstraintHandler {
     Map<String, Offset> positions,
     Map<String, Offset> fixed,
     List<List<String>> alignments,
-    Iterable<RelativePlacementConstraint> constraints, {
+    List<RelativePlacementConstraint> constraints, {
     required bool horizontal,
   }) {
-    final relevantConstraints = constraints.toList();
     double coordinate(Offset point) => horizontal ? point.x : point.y;
     for (final alignment in alignments) {
       final uniqueMembers = alignment.toSet();
@@ -460,7 +464,7 @@ final class ConstraintHandler {
         positions[node] = horizontal ? Offset(value, old.y) : Offset(old.x, value);
       }
     }
-    if (relevantConstraints.isEmpty) return;
+    if (constraints.isEmpty) return;
 
     final nodeToGroup = <String, String>{};
     final members = <String, Set<String>>{};
@@ -493,7 +497,7 @@ final class ConstraintHandler {
     final outgoing = <String, List<({String target, double gap})>>{};
     final indegree = {for (final group in members.keys) group: 0};
     final undirected = <String, Set<String>>{};
-    for (final constraint in relevantConstraints) {
+    for (final constraint in constraints) {
       final source = groupOf(constraint.first);
       final target = groupOf(constraint.second);
       final gap = constraint.gap ?? defaultGap;

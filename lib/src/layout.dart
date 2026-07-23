@@ -123,15 +123,64 @@ final class FcoseLayout {
         .positions;
   }
 
+  ({FcoseEdge edge, double idealLength, double elasticity}) _springData(_WorkingGraph graph, FcoseEdge edge) {
+    final baseIdeal = edge.idealLength ?? options.idealEdgeLength;
+    var idealLength = baseIdeal;
+    if (graph.compounds.ownerOf(edge.source) != graph.compounds.ownerOf(edge.target)) {
+      final lca = graph.compounds.lowestCommonOwner(edge.source, edge.target);
+      final lcaDepth = lca == null ? 1 : graph.compounds.inclusionDepthOf(lca);
+      final nestingDepth =
+          graph.compounds.inclusionDepthOf(edge.source) + graph.compounds.inclusionDepthOf(edge.target) - 2 * lcaDepth;
+      final sourceInLca = graph.compounds.childInOwner(edge.source, lca);
+      final targetInLca = graph.compounds.childInOwner(edge.target, lca);
+      idealLength += baseIdeal * options.nestingFactor * nestingDepth;
+      idealLength +=
+          graph.compounds.estimatedSizeOf(sourceInLca) +
+          graph.compounds.estimatedSizeOf(targetInLca) -
+          2 * _layoutBaseSimpleNodeSize;
+    }
+    return (edge: edge, idealLength: idealLength, elasticity: edge.elasticity ?? options.edgeElasticity);
+  }
+
   int _runSpringEmbedder(_WorkingGraph graph, Map<String, Offset> positions, ConstraintHandler constraintHandler) {
-    final forces = <String, Offset>{};
     final fixed = options.fixedNodes.map((constraint) => constraint.nodeId).toSet();
+    final layoutNodes = graph.compounds.layoutOrder;
+    final compoundIds = {
+      for (final node in layoutNodes)
+        if (graph.compounds.isCompound(node.id)) node.id,
+    };
+    final movementWeights = <String, int>{};
+    for (final node in layoutNodes) {
+      final descendants = graph.compounds.descendantLeaves(node.id);
+      final fixedDescendantCount = descendants.where(fixed.contains).length;
+      movementWeights[node.id] = fixedDescendantCount == 0 ? descendants.length : fixedDescendantCount * 100;
+    }
+    final gravityByOwner = <String?, ({double range, double estimatedSize, double strength})>{};
+    final processedOwners = <String?>{};
+    for (final node in layoutNodes) {
+      final owner = graph.compounds.ownerOf(node.id);
+      if (!processedOwners.add(owner) || graph.compounds.isOwnerConnected(owner)) {
+        continue;
+      }
+      gravityByOwner[owner] = (
+        range: owner == null ? options.gravityRange : options.compoundGravityRange,
+        estimatedSize: graph.compounds.estimatedSizeOfOwner(owner),
+        strength: options.gravity * (owner == null ? 1 : options.compoundGravity),
+      );
+    }
+    final springs = [for (final edge in graph.edges) _springData(graph, edge)];
+    final forces = {for (final node in graph.graph.nodes) node.id: Offset.zero};
+    final leafDisplacements = {for (final leaf in graph.leaves) leaf.id: Offset.zero};
+    final ownerBounds = <String?, Rect>{};
     var coolingFactor = options.initialEnergyOnIncremental;
     var coolingCycle = 0;
     var totalDisplacement = double.infinity;
     var oldTotalDisplacement = 0.0;
     final maxIterations = math.max(options.maxIterations, graph.graph.nodes.length * _minimumIterationsPerNode);
     final maxCoolingCycle = maxIterations / _convergenceCheckPeriod;
+    final coolingExponent = maxIterations <= _convergenceCheckPeriod
+        ? 0.0
+        : math.log(100 * (options.initialEnergyOnIncremental - options.minTemperature)) / math.log(maxCoolingCycle);
     var repulsionPairs = <(FcoseNode, FcoseNode)>[];
     final averageIdealLength = graph.edges.isEmpty
         ? options.idealEdgeLength
@@ -154,10 +203,8 @@ final class FcoseLayout {
           LayoutQuality.draft || LayoutQuality.defaultQuality => coolingCycle.toDouble(),
           LayoutQuality.proof => 1.0,
         };
-        final exponent =
-            math.log(100 * (options.initialEnergyOnIncremental - options.minTemperature)) / math.log(maxCoolingCycle);
         coolingFactor = math.max(
-          options.initialEnergyOnIncremental - math.pow(coolingCycle, exponent) / 100 * adjuster,
+          options.initialEnergyOnIncremental - math.pow(coolingCycle, coolingExponent) / 100 * adjuster,
           options.minTemperature,
         );
       }
@@ -165,6 +212,10 @@ final class FcoseLayout {
       for (final node in graph.graph.nodes) {
         forces[node.id] = Offset.zero;
       }
+      for (final leaf in graph.leaves) {
+        leafDisplacements[leaf.id] = Offset.zero;
+      }
+      ownerBounds.clear();
 
       if (iterationNumber % _repulsionGridRefreshPeriod == 1) {
         repulsionPairs = _refreshRepulsionPairs(graph, rectangles, 2 * averageIdealLength);
@@ -199,10 +250,9 @@ final class FcoseLayout {
       }
 
       // Hooke springs act on their real endpoints, including compounds.
-      for (final edge in graph.edges) {
+      for (final (:edge, :idealLength, :elasticity) in springs) {
         final source = edge.source;
         final target = edge.target;
-        if (source == target) continue;
         final sourceRect = rectangles[source]!;
         final targetRect = rectangles[target]!;
         var delta = sourceRect.boundaryDisplacementTo(targetRect);
@@ -211,54 +261,33 @@ final class FcoseLayout {
           delta.x.abs() < _minimumSpringComponentLength ? delta.x.sign : delta.x,
           delta.y.abs() < _minimumSpringComponentLength ? delta.y.sign : delta.y,
         );
-        final baseIdeal = edge.idealLength ?? options.idealEdgeLength;
-        var ideal = baseIdeal;
-        if (graph.compounds.ownerOf(source) != graph.compounds.ownerOf(target)) {
-          final lca = graph.compounds.lowestCommonOwner(source, target);
-          final lcaDepth = lca == null ? 1 : graph.compounds.inclusionDepthOf(lca);
-          final nestingDepth =
-              graph.compounds.inclusionDepthOf(source) + graph.compounds.inclusionDepthOf(target) - 2 * lcaDepth;
-          final sourceInLca = graph.compounds.childInOwner(source, lca);
-          final targetInLca = graph.compounds.childInOwner(target, lca);
-          ideal += baseIdeal * options.nestingFactor * nestingDepth;
-          ideal +=
-              graph.compounds.estimatedSizeOf(sourceInLca) +
-              graph.compounds.estimatedSizeOf(targetInLca) -
-              2 * _layoutBaseSimpleNodeSize;
-        }
-        final elasticity = edge.elasticity ?? options.edgeElasticity;
-        final magnitude = elasticity * (delta.length - ideal);
+        final magnitude = elasticity * (delta.length - idealLength);
         final force = delta.normalized() * magnitude;
         forces[source] = forces[source]! + force;
         forces[target] = forces[target]! - force;
       }
 
-      final leafDisplacements = {for (final leaf in graph.leaves) leaf.id: Offset.zero};
-      for (final node in graph.compounds.layoutOrder) {
+      for (final node in layoutNodes) {
         if (fixed.contains(node.id)) continue;
         final position = rectangles[node.id]!.center;
         final owner = graph.compounds.ownerOf(node.id);
         var gravityForce = Offset.zero;
-        if (!graph.compounds.isOwnerConnected(owner)) {
-          final ownerBounds = graph.compounds.ownerBounds(owner, rectangles);
-          final ownerCenter = ownerBounds.center;
+        final gravity = gravityByOwner[owner];
+        if (gravity != null) {
+          final bounds = ownerBounds.putIfAbsent(owner, () => graph.compounds.ownerBounds(owner, rectangles));
+          final ownerCenter = bounds.center;
           final distance = position - ownerCenter;
-          final rangeFactor = owner == null ? options.gravityRange : options.compoundGravityRange;
-          final estimatedSize = graph.compounds.estimatedSizeOfOwner(owner);
           final nodeRect = rectangles[node.id]!;
-          if (distance.x.abs() + nodeRect.width / 2 > estimatedSize * rangeFactor ||
-              distance.y.abs() + nodeRect.height / 2 > estimatedSize * rangeFactor) {
-            final strength = options.gravity * (owner == null ? 1 : options.compoundGravity);
-            gravityForce = (ownerCenter - position) * strength;
+          if (distance.x.abs() + nodeRect.width / 2 > gravity.estimatedSize * gravity.range ||
+              distance.y.abs() + nodeRect.height / 2 > gravity.estimatedSize * gravity.range) {
+            gravityForce = (ownerCenter - position) * gravity.strength;
           }
         }
         final descendants = graph.compounds.descendantLeaves(node.id);
-        final fixedDescendantCount = descendants.where(fixed.contains).length;
         // cose-base assigns weight 100 to each fixed leaf below a compound so
         // forces on the ancestor only gently move its unfixed descendants.
-        final movementWeight = fixedDescendantCount == 0 ? descendants.length : fixedDescendantCount * 100;
-        var displacement = (forces[node.id]! + gravityForce) * (coolingFactor / movementWeight);
-        if (!graph.compounds.isCompound(node.id)) {
+        var displacement = (forces[node.id]! + gravityForce) * (coolingFactor / movementWeights[node.id]!);
+        if (!compoundIds.contains(node.id)) {
           displacement += leafDisplacements[node.id]!;
         }
         final displacementLimit = coolingFactor * 100;
@@ -269,7 +298,7 @@ final class FcoseLayout {
         // CoSENode visits owner graphs in LGraphManager order. Each compound
         // first contributes to its descendant leaves; when a leaf is reached,
         // its accumulated ancestor and local displacement are clamped together.
-        if (graph.compounds.isCompound(node.id)) {
+        if (compoundIds.contains(node.id)) {
           for (final leaf in descendants) {
             if (!fixed.contains(leaf)) {
               leafDisplacements[leaf] = leafDisplacements[leaf]! + displacement;
@@ -735,7 +764,7 @@ final class _RootZeroDegreeTiling {
 final class _WorkingGraph {
   _WorkingGraph(this.graph)
     : nodeById = graph.nodeById,
-      leaves = List.unmodifiable(graph.leafNodes),
+      leaves = graph.leafNodes,
       compounds = CompoundGraphManager(graph) {
     final seenPairs = <(String, String)>{};
     edges = List.unmodifiable([

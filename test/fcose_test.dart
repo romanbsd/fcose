@@ -303,6 +303,31 @@ void main() {
   });
 
   group('constraint handler', () {
+    test('snapshots mutable constraint collections deeply', () {
+      final fixed = <FixedNodeConstraint>[const FixedNodeConstraint('a', Offset.zero)];
+      final vertical = <List<String>>[
+        ['a', 'b'],
+      ];
+      final relative = <RelativePlacementConstraint>[const RelativePlacementConstraint.horizontal('a', 'b')];
+      final handler = ConstraintHandler(
+        fixedNodes: fixed,
+        alignment: AlignmentConstraint(vertical: vertical),
+        relativePlacements: relative,
+        defaultGap: 50,
+      );
+
+      fixed.clear();
+      vertical.single.add('c');
+      relative.clear();
+
+      expect(handler.fixedNodes, hasLength(1));
+      expect(handler.alignment.vertical, [
+        ['a', 'b'],
+      ]);
+      expect(handler.relativePlacements, hasLength(1));
+      expect(() => handler.alignment.vertical.single.add('c'), throwsUnsupportedError);
+    });
+
     test('rotates the randomized draft toward an alignment constraint', () {
       final positions = <String, Offset>{
         'a': const Offset(0, 0),

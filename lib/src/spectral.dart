@@ -48,12 +48,13 @@ final class SpectralInitializer {
       return SpectralResult(positions, const []);
     }
     final count = math.min(sampleSize, nodes.length);
+    final nodeSet = nodes.toSet();
     final samples = samplingType == SamplingType.greedy
-        ? _greedySamples(nodes, adjacency, count)
+        ? _greedySamples(nodes, nodeSet, adjacency, count)
         : _randomSamples(nodes, count);
     final distances = <List<double>>[];
     for (final sample in samples) {
-      final column = _distances(sample, nodes, adjacency);
+      final column = _distances(sample, nodeSet, adjacency);
       distances.add([for (final node in nodes) math.pow(column[node]! * nodeSeparation, 2).toDouble()]);
     }
     final c = List.generate(nodes.length, (row) => List.generate(count, (column) => distances[column][row]));
@@ -82,20 +83,21 @@ final class SpectralInitializer {
 
   List<String> _randomSamples(List<String> nodes, int count) {
     final result = <String>[];
+    final selected = <String>{};
     while (result.length < count) {
       final sample = nodes[_random.nextInt(nodes.length)];
-      if (!result.contains(sample)) result.add(sample);
+      if (selected.add(sample)) result.add(sample);
     }
     return result;
   }
 
-  List<String> _greedySamples(List<String> nodes, Map<String, Set<String>> adjacency, int count) {
+  List<String> _greedySamples(List<String> nodes, Set<String> allowed, Map<String, Set<String>> adjacency, int count) {
     var current = nodes[_random.nextInt(nodes.length)];
     final result = <String>[];
     final minimum = {for (final node in nodes) node: 1 << 30};
     while (result.length < count) {
       result.add(current);
-      final distance = _distances(current, nodes, adjacency);
+      final distance = _distances(current, allowed, adjacency);
       for (final node in nodes) {
         minimum[node] = math.min(minimum[node]!, distance[node]!);
       }
@@ -104,8 +106,7 @@ final class SpectralInitializer {
     return result;
   }
 
-  Map<String, int> _distances(String start, List<String> nodes, Map<String, Set<String>> adjacency) {
-    final allowed = nodes.toSet();
+  Map<String, int> _distances(String start, Set<String> allowed, Map<String, Set<String>> adjacency) {
     final result = <String, int>{start: 0};
     final queue = Queue<String>()..add(start);
     while (queue.isNotEmpty) {

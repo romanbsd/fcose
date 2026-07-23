@@ -1,109 +1,104 @@
 # fcose
 
-A framework-independent, pure Dart graph layout engine for a Dart port of
-Mermaid.js. The Mermaid architecture execution path is parity-tested against
-Mermaid 11.16 and cytoscape-fcose 2.2.0. General fCoSE behavior outside that
-path is still under development, so the package is not yet a universal
-Cytoscape.js drop-in replacement.
+A framework-independent, pure Dart port of
+[`cytoscape-fcose`](https://github.com/iVis-at-Bilkent/cytoscape.js-fcose)
+2.2.0 and its required `cose-base` and `layout-base` foundations.
 
-The package accepts measured node rectangles and compound parent IDs, then
-returns center positions and final rectangles. Rendering and edge routing stay
-with the Mermaid renderer.
+The package accepts a typed compound graph and returns deterministic node
+centers and rectangles. It has no Cytoscape.js, browser, Flutter, FFI, or
+JavaScript runtime dependency.
+
+General fCoSE parity is still under development, so this prerelease is not yet
+a universal drop-in replacement for every cytoscape-fcose option and graph
+topology.
+
+## Usage
+
+```dart
+import 'package:fcose/fcose.dart';
+
+final graph = FcoseGraph(
+  nodes: const [
+    FcoseNode(id: 'cluster'),
+    FcoseNode(id: 'api', width: 72, height: 48, parentId: 'cluster'),
+    FcoseNode(id: 'database', width: 72, height: 48, parentId: 'cluster'),
+    FcoseNode(id: 'client', width: 72, height: 48),
+  ],
+  edges: const [
+    FcoseEdge(
+      id: 'request',
+      source: 'client',
+      target: 'api',
+      idealLength: 80,
+    ),
+    FcoseEdge(
+      id: 'query',
+      source: 'api',
+      target: 'database',
+      idealLength: 80,
+    ),
+  ],
+);
+
+final result = FcoseLayout(
+  options: const FcoseOptions(
+    quality: LayoutQuality.proof,
+    seed: 7,
+    idealEdgeLength: 80,
+  ),
+).run(graph);
+
+final apiCenter = result.positionOf('api');
+final clusterBounds = result.rectOf('cluster');
+```
+
+When `randomize` is false, every leaf node must provide an initial position.
+Node widths and heights are measured layout dimensions. Edge ideal lengths are
+boundary-to-boundary distances, matching CoSE rather than center-to-center
+distances.
 
 ## Implemented foundations
 
 - validated undirected compound graph model;
 - sampled deterministic spectral initialization;
-- rectangle-clipped CoSE springs, per-node repulsion, gravity, cooling, and
-  convergence;
+- rectangle-clipped CoSE springs and overlap separation;
+- per-node repulsion, gravity, cooling, and convergence;
 - live compound-node forces, nesting-aware edge lengths, and compound gravity;
-- disconnected-component detection and packing;
-- cose-base area-ordered tiling and dummy-compound participation for
-  root-level zero-degree groups;
-- bottom-up compound bounds with configurable padding;
-- transformed and displacement-relaxed fixed, alignment, and DAG placement constraints;
-- typed quality and greedy/random sampling options;
-- Mermaid architecture adapter for topology-specific springs, directional
-  constraints, compound padding, and the renderer's two-pass layout lifecycle.
+- disconnected-component detection and compound-safe packing;
+- root-level area-ordered zero-degree tiling;
+- bottom-up compound bounds with padding and label geometry;
+- transformed and displacement-relaxed fixed, alignment, and DAG placement
+  constraints;
+- typed quality, greedy/random sampling, force, geometry, tiling, and
+  constraint options;
+- platform-stable seeded execution on the Dart VM and dart2js.
 
-## Mermaid renderer integration
+## Remaining parity work
 
-Measure service/group labels and icons before layout, create an `FcoseNode` for
-each service and group, and use `parentId` for nested Mermaid groups. Supply
-Cytoscape-grid initial positions when `randomize` is false, then configure the
-directional architecture links and declared alignment hints:
+The largest known differences from cytoscape-fcose 2.2.0 are:
 
-```dart
-const adapter = MermaidFcoseAdapter(
-  iconSize: 80,
-  idealEdgeLengthMultiplier: 1.5,
-  edgeElasticity: 0.45,
-);
-final configuration = adapter.configureArchitecture(
-  graph,
-  directionalEdges: directionalEdges,
-  layoutHints: const [
-    MermaidAlignmentHint(
-      MermaidAlignmentDirection.row,
-      ['source-a', 'source-b'],
-    ),
-  ],
-);
-final result = configuration.runMermaidArchitecture();
+- CoSE tree reduction, incremental regrowth, and post-growth cooling;
+- spectral dummy-node connections between disconnected top-level and nested
+  compound components;
+- randomized zero-degree grouping and nested-owner compound
+  clear/repopulate tiling;
+- exact layout-utilities component packing and original-center relocation;
+- remaining general option semantics such as uniform leaf dimensions,
+  configurable tiling comparison, explicit packing control, and debug steps.
 
-final serviceCenter = result.positionOf('source-a');
-final groupBounds = result.rectOf('group-id');
-```
-
-`runMermaidArchitecture()` intentionally runs fCoSE twice. Mermaid's
-architecture renderer invokes a second layout from its one-shot `layoutstop`
-callback, using the first pass positions as the second pass input. For a
-single-pass general graph layout, call:
-
-```dart
-final result = FcoseLayout(
-  options: configuration.options,
-).run(
-  configuration.graph,
-);
-```
-
-The adapter reproduces Mermaid's directional spatial maps, pairwise alignment
-flattening, duplicate constraints, JavaScript object-key ordering, and
-label-aware compound bounds across both layout passes. The differential corpus
-covers linear chains, seeded randomized runs, fan-in, mixed-axis and dense
-meshes, junction pairs and spines, sibling and nested compounds, combined
-row/column constraints, cross-group springs, and Mermaid's deep Azure fixture.
-Most fixtures use `1e-9` tolerances; repeated nonlinear spring accumulation
-stays within `5e-5` pixels across JavaScript and Dart floating-point runtimes.
-
-These package-level fixtures begin with measured graph geometry and end with
-layout rectangles. Before a consuming Mermaid renderer removes specialized
-architecture positioning, it must add an end-to-end parity test covering its
-parser AST, exact text/icon measurement, fCoSE adapter, edge routing, and final
-SVG output against Mermaid.js.
-
-Renderer-specific ports, labels, SVG paths, and icon placement should be
-computed after layout.
-
-Zero-degree tiling currently matches cose-base only for the implemented
-non-randomized root-level paths. Randomized grouping and nested-owner
-clear/repopulate behavior remain follow-up work. The constrained Mermaid
-architecture fixtures described above do not enter those missing branches;
-architecture cases that do require them need separate parity coverage.
+Browser presentation concerns such as animation, viewport fitting, event
+emission, and Cytoscape collection adaptation are intentionally outside this
+renderer-independent layout engine.
 
 ## Upstream mapping
-
-The implementation is being split along the three upstream layers:
 
 | Dart concern | Upstream source |
 | --- | --- |
 | geometry, graph validation, components | `layout-base` |
 | spring embedding, cooling, compound bounds | `cose-base` |
-| spectral start, constraints, public options | `cytoscape.js-fcose` 2.2.0 |
+| spectral start, constraints, public options | `cytoscape-fcose` 2.2.0 |
 
-The public API uses Dart value types and enums rather than reproducing the
-Cytoscape.js adapter. This is intentional: the consumer is a Dart Mermaid
-renderer and not a JavaScript graph widget.
+The public API expresses these algorithms with Dart value types and enums
+instead of reproducing Cytoscape.js collection and callback conventions.
 
 The upstream projects and this port are MIT licensed.

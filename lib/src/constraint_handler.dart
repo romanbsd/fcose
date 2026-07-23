@@ -618,7 +618,7 @@ final class ConstraintHandler {
   }
 }
 
-/// Mermaid's seeded `Math.random` replacement from `architectureSeed.ts`.
+/// Deterministic `Math.random` substitute for reproducible constraint shuffles.
 final class _Mulberry32 {
   _Mulberry32(int seed) : _state = seed & _mask;
 

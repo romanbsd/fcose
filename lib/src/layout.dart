@@ -38,7 +38,7 @@ final class FcoseResult {
 /// Pure Dart implementation of the fCoSE spectral + compound spring layout.
 ///
 /// The input and output deliberately contain no Cytoscape, DOM, or Flutter
-/// objects, making this class suitable for a Dart Mermaid renderer.
+/// objects, keeping the layout engine framework-independent.
 final class FcoseLayout {
   const FcoseLayout({this.options = const FcoseOptions()});
 

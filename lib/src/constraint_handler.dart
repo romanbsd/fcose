@@ -179,12 +179,13 @@ final class ConstraintHandler {
     required bool horizontal,
   }) {
     for (final group in groups) {
-      final fixedMember = group.where(fixed.contains).firstOrNull;
+      final uniqueMembers = group.toSet();
+      final fixedMember = uniqueMembers.where(fixed.contains).firstOrNull;
       final coordinate = fixedMember == null
-          ? group
+          ? uniqueMembers
                     .map((node) => horizontal ? positions[node]!.x : positions[node]!.y)
                     .reduce((first, second) => first + second) /
-                group.length
+                uniqueMembers.length
           : horizontal
           ? positions[fixedMember]!.x
           : positions[fixedMember]!.y;
@@ -448,11 +449,12 @@ final class ConstraintHandler {
     final relevantConstraints = constraints.toList();
     double coordinate(Offset point) => horizontal ? point.x : point.y;
     for (final alignment in alignments) {
-      final fixedMember = alignment.where(fixed.containsKey).firstOrNull;
+      final uniqueMembers = alignment.toSet();
+      final fixedMember = uniqueMembers.where(fixed.containsKey).firstOrNull;
       final value = fixedMember == null
-          ? alignment.map((node) => coordinate(positions[node]!)).reduce((a, b) => a + b) / alignment.length
+          ? uniqueMembers.map((node) => coordinate(positions[node]!)).reduce((a, b) => a + b) / uniqueMembers.length
           : coordinate(fixed[fixedMember]!);
-      for (final node in alignment) {
+      for (final node in uniqueMembers) {
         if (fixed.containsKey(node)) continue;
         final old = positions[node]!;
         positions[node] = horizontal ? Offset(value, old.y) : Offset(old.x, value);

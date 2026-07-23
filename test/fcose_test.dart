@@ -321,6 +321,23 @@ void main() {
       expect(positions['c']!.x, 12.5);
     });
 
+    test('deduplicates alignment members while calculating their coordinate', () {
+      final positions = <String, Offset>{'a': const Offset(0, 0), 'b': const Offset(12, 0), 'c': const Offset(30, 0)};
+
+      ConstraintHandler(
+        fixedNodes: [],
+        alignment: AlignmentConstraint(
+          vertical: [
+            ['a', 'b', 'b', 'c'],
+          ],
+        ),
+        relativePlacements: [],
+        defaultGap: 50,
+      ).enforce(positions);
+
+      expect(positions.values.map((position) => position.x), everyElement(14));
+    });
+
     test('rejects a positive relative gap inside an alignment group', () {
       expect(
         () => ConstraintHandler(
@@ -657,7 +674,7 @@ void main() {
       );
     });
 
-    test('Mermaid adapter matches upstream deep Azure constraints and first pass', () {
+    test('Mermaid adapter matches upstream deep Azure two-pass layout', () {
       final configuration =
           const MermaidFcoseAdapter(
             iconSize: 80,
@@ -796,9 +813,6 @@ void main() {
       );
       final second = configuration.runMermaidArchitecture();
       // The same upstream harness run twice in sequence, as Mermaid does.
-      // The remaining sub-4px drift comes from Cytoscape feeding label-aware
-      // compound dimensions into pass two; the pure graph model does not yet
-      // carry renderer label bounds.
       expect(
         [
           second.positionOf('web').x - second.positionOf('nsg').x,
@@ -810,13 +824,13 @@ void main() {
           second.positionOf('vm1').x - second.positionOf('web').x,
         ],
         [
-          closeTo(441.7933154561815, 4),
-          closeTo(227.80741633129946, 4),
-          closeTo(332.99465409932236, 4),
-          closeTo(188.59217977970275, 4),
-          closeTo(250.00364483071098, 4),
-          closeTo(256.45039091459694, 4),
-          closeTo(-788.0451198792834, 4),
+          closeTo(441.7933154561815, 1e-5),
+          closeTo(227.80741633129946, 1e-5),
+          closeTo(332.99465409932236, 1e-5),
+          closeTo(188.59217977970275, 1e-5),
+          closeTo(250.00364483071098, 1e-5),
+          closeTo(256.45039091459694, 1e-5),
+          closeTo(-788.0451198792834, 1e-5),
         ],
       );
     });

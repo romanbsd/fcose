@@ -1,8 +1,23 @@
 import 'geometry.dart';
 
+enum FcoseLabelHorizontalPosition { left, center, right }
+
+enum FcoseLabelVerticalPosition { top, center, bottom }
+
 /// A node accepted by the framework-neutral fCoSE layout API.
 final class FcoseNode {
-  const FcoseNode({required this.id, this.width = 30, this.height = 30, this.parentId, this.position});
+  const FcoseNode({
+    required this.id,
+    this.width = 30,
+    this.height = 30,
+    this.parentId,
+    this.position,
+    this.labelWidth = 0,
+    this.labelHeight = 0,
+    this.labelHorizontalPosition = FcoseLabelHorizontalPosition.center,
+    this.labelVerticalPosition = FcoseLabelVerticalPosition.center,
+    this.nodeRepulsion,
+  });
 
   final String id;
   final double width;
@@ -11,6 +26,18 @@ final class FcoseNode {
 
   /// Initial center position. It is respected when [FcoseOptions.randomize] is false.
   final Offset? position;
+
+  /// Measured label dimensions used by layout-base when updating compound
+  /// bounds. Leaf [width] and [height] should already include labels when the
+  /// consuming renderer enables `nodeDimensionsIncludeLabels`.
+  final double labelWidth;
+  final double labelHeight;
+  final FcoseLabelHorizontalPosition labelHorizontalPosition;
+  final FcoseLabelVerticalPosition labelVerticalPosition;
+
+  /// Per-node fCoSE repulsion strength. When absent, the layout-wide option is
+  /// used, matching cytoscape-fCoSE's `nodeRepulsion(node)` callback.
+  final double? nodeRepulsion;
 }
 
 /// An undirected graph edge.
@@ -54,6 +81,9 @@ final class FcoseGraph {
       if (!ids.add(node.id)) throw ArgumentError.value(node.id, 'nodes', 'duplicate node ID');
       if (node.width <= 0 || node.height <= 0) {
         throw ArgumentError.value(node.id, 'nodes', 'node dimensions must be positive');
+      }
+      if (node.labelWidth < 0 || node.labelHeight < 0) {
+        throw ArgumentError.value(node.id, 'nodes', 'label dimensions must not be negative');
       }
     }
     for (final node in nodes) {

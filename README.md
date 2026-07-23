@@ -12,7 +12,8 @@ with the Mermaid renderer.
 
 - validated undirected compound graph model;
 - sampled deterministic spectral initialization;
-- rectangle-clipped CoSE springs, repulsion, gravity, cooling, and convergence;
+- rectangle-clipped CoSE springs, per-node repulsion, gravity, cooling, and
+  convergence;
 - live compound-node forces, nesting-aware edge lengths, and compound gravity;
 - disconnected-component detection and packing;
 - bottom-up compound bounds with configurable padding;
@@ -63,14 +64,12 @@ final result = FcoseLayout(
 );
 ```
 
-The adapter now reproduces Mermaid's directional spatial maps, pairwise
-alignment flattening, duplicate constraints, and JavaScript object-key ordering.
-Its first pass matches the browser-backed Mermaid 11.16 deep-compound fixture
-exactly. Full second-pass parity is still in progress: Cytoscape expands
-compound bounds using child label boxes between passes, while `FcoseNode`
-currently carries only the force rectangle. The same fixture is within four
-pixels after pass two, but consumers should not claim exact renderer parity
-until label-aware compound bounds are represented.
+The adapter reproduces Mermaid's directional spatial maps, pairwise alignment
+flattening, duplicate constraints, JavaScript object-key ordering, and
+label-aware compound bounds across both layout passes. Its first and second
+passes match the browser-backed Mermaid 11.16 deep-compound fixture. Broader
+renderer parity is still in progress, so consumers should not claim general
+drop-in parity until the differential architecture corpus is complete.
 
 Renderer-specific ports, labels, SVG paths, and icon placement should be
 computed after layout.

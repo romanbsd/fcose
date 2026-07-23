@@ -184,11 +184,40 @@ final class CompoundGraphManager {
         bounds = bounds.union(result[child.id]!);
       }
       final padded = bounds.inflate(padding);
-      result[node.id] = Rect.fromCenter(
-        padded.center,
-        padded.width < node.width ? node.width : padded.width,
-        padded.height < node.height ? node.height : padded.height,
-      );
+      var left = padded.left;
+      var top = padded.top;
+      var width = padded.width;
+      var height = padded.height;
+
+      if (node.labelWidth > 0) {
+        switch (node.labelHorizontalPosition) {
+          case FcoseLabelHorizontalPosition.left:
+            left -= node.labelWidth;
+            width += node.labelWidth;
+          case FcoseLabelHorizontalPosition.center when node.labelWidth > width:
+            left -= (node.labelWidth - width) / 2;
+            width = node.labelWidth;
+          case FcoseLabelHorizontalPosition.center:
+            break;
+          case FcoseLabelHorizontalPosition.right:
+            width += node.labelWidth;
+        }
+      }
+      if (node.labelHeight > 0) {
+        switch (node.labelVerticalPosition) {
+          case FcoseLabelVerticalPosition.top:
+            top -= node.labelHeight;
+            height += node.labelHeight;
+          case FcoseLabelVerticalPosition.center when node.labelHeight > height:
+            top -= (node.labelHeight - height) / 2;
+            height = node.labelHeight;
+          case FcoseLabelVerticalPosition.center:
+            break;
+          case FcoseLabelVerticalPosition.bottom:
+            height += node.labelHeight;
+        }
+      }
+      result[node.id] = Rect(left, top, width, height);
       pending.remove(node);
     }
     return result;

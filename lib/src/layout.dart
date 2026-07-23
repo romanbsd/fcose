@@ -117,8 +117,9 @@ final class FcoseLayout {
     var coolingCycle = 0;
     var totalDisplacement = double.infinity;
     var oldTotalDisplacement = 0.0;
-    final maxCoolingCycle = options.maxIterations / 100;
-    final repulsionPairs = <(String, String)>{};
+    final maxIterations = math.max(options.maxIterations, graph.graph.nodes.length * _minimumIterationsPerNode);
+    final maxCoolingCycle = maxIterations / 100;
+    var repulsionPairs = <(FcoseNode, FcoseNode)>[];
     final averageIdealLength = graph.edges.isEmpty
         ? options.idealEdgeLength
         : graph.edges
@@ -127,13 +128,12 @@ final class FcoseLayout {
               graph.edges.length;
     final totalDisplacementThreshold = 0.03 * averageIdealLength * graph.graph.nodes.length;
 
-    for (var iteration = 0; iteration < options.maxIterations; iteration++) {
+    for (var iteration = 0; iteration < maxIterations; iteration++) {
       final iterationNumber = iteration + 1;
-      if (iterationNumber == options.maxIterations) return iterationNumber;
+      if (iterationNumber == maxIterations) return iterationNumber;
       if (iterationNumber % 100 == 0) {
         final converged = totalDisplacement < totalDisplacementThreshold;
-        final oscillating =
-            iterationNumber > options.maxIterations / 3 && (totalDisplacement - oldTotalDisplacement).abs() < 2;
+        final oscillating = iterationNumber > maxIterations / 3 && (totalDisplacement - oldTotalDisplacement).abs() < 2;
         oldTotalDisplacement = totalDisplacement;
         if (converged || oscillating) return iterationNumber;
         coolingCycle++;
@@ -153,57 +153,36 @@ final class FcoseLayout {
         forces[node.id] = Offset.zero;
       }
 
-      // layout-base calculates repulsion only between nodes in the same owner
-      // graph. Compound nodes are ordinary siblings at their parent's level.
-      for (final siblings in graph.graph.childrenByParent.values) {
-        for (var i = 0; i < siblings.length; i++) {
-          final first = siblings[i];
-          for (var j = i + 1; j < siblings.length; j++) {
-            final second = siblings[j];
-            final firstRect = rectangles[first.id]!;
-            final secondRect = rectangles[second.id]!;
-            final pair = (first.id, second.id);
-            if (iterationNumber % _repulsionGridRefreshPeriod == 1) {
-              final distanceX =
-                  (firstRect.center.x - secondRect.center.x).abs() - (firstRect.width + secondRect.width) / 2;
-              final distanceY =
-                  (firstRect.center.y - secondRect.center.y).abs() - (firstRect.height + secondRect.height) / 2;
-              final repulsionRange = 2 * averageIdealLength;
-              if (distanceX <= repulsionRange && distanceY <= repulsionRange) {
-                repulsionPairs.add(pair);
-              } else {
-                repulsionPairs.remove(pair);
-              }
-            }
-            if (!repulsionPairs.contains(pair)) continue;
-            final firstWeight = graph.compounds.descendantLeaves(first.id).length;
-            final secondWeight = graph.compounds.descendantLeaves(second.id).length;
-            if (firstRect.overlaps(secondRect)) {
-              final childFactor = firstWeight * secondWeight / (firstWeight + secondWeight);
-              final separation = firstRect.separationAmountTo(secondRect, buffer: averageIdealLength / 2);
-              final force = separation * (-2 * childFactor);
-              forces[first.id] = forces[first.id]! + force;
-              forces[second.id] = forces[second.id]! - force;
-              continue;
-            }
-            var delta = secondRect.boundaryDisplacementTo(firstRect);
-            // CoSE's FR-grid variant only evaluates nodes in the surrounding
-            // range for ten iterations, matching layout-base's cached grid
-            // neighborhood.
-            final minimumComponentDistance = averageIdealLength / 10;
-            delta = Offset(
-              delta.x.abs() < minimumComponentDistance ? delta.x.sign * minimumComponentDistance : delta.x,
-              delta.y.abs() < minimumComponentDistance ? delta.y.sign * minimumComponentDistance : delta.y,
-            );
-            final boundaryDistance = delta.length;
-            if (boundaryDistance == 0) continue;
-            final magnitude =
-                options.nodeRepulsion * firstWeight * secondWeight / (boundaryDistance * boundaryDistance);
-            final force = delta.normalized() * magnitude;
-            forces[first.id] = forces[first.id]! + force;
-            forces[second.id] = forces[second.id]! - force;
-          }
+      if (iterationNumber % _repulsionGridRefreshPeriod == 1) {
+        repulsionPairs = _refreshRepulsionPairs(graph, rectangles, 2 * averageIdealLength);
+      }
+      for (final (first, second) in repulsionPairs) {
+        final firstRect = rectangles[first.id]!;
+        final secondRect = rectangles[second.id]!;
+        final firstWeight = graph.compounds.descendantLeaves(first.id).length;
+        final secondWeight = graph.compounds.descendantLeaves(second.id).length;
+        if (firstRect.overlaps(secondRect)) {
+          final childFactor = firstWeight * secondWeight / (firstWeight + secondWeight);
+          final separation = firstRect.separationAmountTo(secondRect, buffer: averageIdealLength / 2);
+          final force = separation * (-2 * childFactor);
+          forces[first.id] = forces[first.id]! + force;
+          forces[second.id] = forces[second.id]! - force;
+          continue;
         }
+        var delta = firstRect.boundaryDisplacementTo(secondRect);
+        final minimumComponentDistance = averageIdealLength / 10;
+        delta = Offset(
+          delta.x.abs() < minimumComponentDistance ? delta.x.sign * minimumComponentDistance : delta.x,
+          delta.y.abs() < minimumComponentDistance ? delta.y.sign * minimumComponentDistance : delta.y,
+        );
+        final boundaryDistance = delta.length;
+        if (boundaryDistance == 0) continue;
+        final pairRepulsion =
+            (first.nodeRepulsion ?? options.nodeRepulsion) / 2 + (second.nodeRepulsion ?? options.nodeRepulsion) / 2;
+        final magnitude = pairRepulsion * firstWeight * secondWeight / (boundaryDistance * boundaryDistance);
+        final force = delta.normalized() * magnitude;
+        forces[first.id] = forces[first.id]! - force;
+        forces[second.id] = forces[second.id]! + force;
       }
 
       // Hooke springs act on their real endpoints, including compounds.
@@ -294,7 +273,70 @@ final class FcoseLayout {
         totalDisplacement += entry.value.x.abs() + entry.value.y.abs();
       }
     }
-    return options.maxIterations;
+    return maxIterations;
+  }
+
+  List<(FcoseNode, FcoseNode)> _refreshRepulsionPairs(
+    _WorkingGraph graph,
+    Map<String, Rect> rectangles,
+    double repulsionRange,
+  ) {
+    final nodes = graph.compounds.layoutOrder.toList();
+    final rootNodes = graph.graph.childrenByParent[null]!;
+    var rootBounds = rectangles[rootNodes.first.id]!;
+    for (final node in rootNodes.skip(1)) {
+      rootBounds = rootBounds.union(rectangles[node.id]!);
+    }
+    rootBounds = rootBounds.inflate(_layoutBaseGraphMargin);
+    final sizeX = math.max(1, (rootBounds.width / repulsionRange).ceil());
+    final sizeY = math.max(1, (rootBounds.height / repulsionRange).ceil());
+    final grid = List.generate(sizeX, (_) => List.generate(sizeY, (_) => <FcoseNode>[]));
+    final coordinates = <String, ({int startX, int finishX, int startY, int finishY})>{};
+
+    for (final node in nodes) {
+      final rectangle = rectangles[node.id]!;
+      final startX = ((rectangle.left - rootBounds.left) / repulsionRange).floor();
+      final finishX = ((rectangle.right - rootBounds.left) / repulsionRange).floor();
+      final startY = ((rectangle.top - rootBounds.top) / repulsionRange).floor();
+      final finishY = ((rectangle.bottom - rootBounds.top) / repulsionRange).floor();
+      coordinates[node.id] = (startX: startX, finishX: finishX, startY: startY, finishY: finishY);
+      for (var x = startX; x <= finishX; x++) {
+        for (var y = startY; y <= finishY; y++) {
+          grid[x][y].add(node);
+        }
+      }
+    }
+
+    final processed = <String>{};
+    final pairs = <(FcoseNode, FcoseNode)>[];
+    for (final first in nodes) {
+      final coordinate = coordinates[first.id]!;
+      final surrounding = <String>{};
+      for (var x = coordinate.startX - 1; x < coordinate.finishX + 2; x++) {
+        for (var y = coordinate.startY - 1; y < coordinate.finishY + 2; y++) {
+          if (x < 0 || y < 0 || x >= sizeX || y >= sizeY) continue;
+          for (final second in grid[x][y]) {
+            if (first.id == second.id ||
+                graph.compounds.ownerOf(first.id) != graph.compounds.ownerOf(second.id) ||
+                processed.contains(second.id) ||
+                !surrounding.add(second.id)) {
+              continue;
+            }
+            final firstRect = rectangles[first.id]!;
+            final secondRect = rectangles[second.id]!;
+            final distanceX =
+                (firstRect.center.x - secondRect.center.x).abs() - (firstRect.width + secondRect.width) / 2;
+            final distanceY =
+                (firstRect.center.y - secondRect.center.y).abs() - (firstRect.height + secondRect.height) / 2;
+            if (distanceX <= repulsionRange && distanceY <= repulsionRange) {
+              pairs.add((first, second));
+            }
+          }
+        }
+      }
+      processed.add(first.id);
+    }
+    return pairs;
   }
 
   ConstraintHandler get _constraintHandler => ConstraintHandler(
@@ -433,6 +475,13 @@ const _minimumSpringComponentLength = 1.0;
 
 /// layout-base's FR grid rebuilds each node's surrounding set every ten ticks.
 const _repulsionGridRefreshPeriod = 10;
+
+/// layout-base `LayoutConstants.DEFAULT_GRAPH_MARGIN`, in pixels.
+const _layoutBaseGraphMargin = 15.0;
+
+/// layout-base `FDLayout.initSpringEmbedder()` runs at least five iterations
+/// per CoSE node, even when the configured maximum is smaller.
+const _minimumIterationsPerNode = 5;
 
 final class _WorkingGraph {
   _WorkingGraph(this.graph)

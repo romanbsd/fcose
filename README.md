@@ -70,8 +70,10 @@ distances.
 - disconnected-component detection, original-center relocation,
   layout-utilities-compatible randomized polyomino packing, and incremental
   POSE packing;
-- area-ordered zero-degree tiling with randomized sibling grouping and
-  bottom-up nested-compound clearing/repopulation;
+- area-ordered or caller-sorted zero-degree tiling with randomized sibling
+  grouping, ideal-row-width organization, and bottom-up nested-compound
+  clearing/repopulation;
+- optional uniform-leaf center-distance spring and repulsion calculations;
 - bottom-up compound bounds with padding and label geometry;
 - transformed and displacement-relaxed fixed, alignment, and DAG placement
   constraints;
@@ -83,9 +85,8 @@ distances.
 
 The largest known differences from cytoscape-fcose 2.2.0 are:
 
-- remaining general option semantics such as uniform leaf dimensions,
-  configurable tiling comparison, tiling interactions with placement
-  constraints, and debug steps.
+- remaining general option semantics such as tiling interactions with placement
+  constraints and debug steps.
 
 Browser presentation concerns such as animation, viewport fitting, event
 emission, and Cytoscape collection adaptation are intentionally outside this

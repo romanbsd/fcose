@@ -941,6 +941,34 @@ void main() {
       expect(result.positionOf('d'), const Offset(130, 105));
     });
 
+    test('matches upstream custom tiling order for mixed node sizes', () {
+      final result =
+          FcoseLayout(
+            options: FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 2,
+              tile: true,
+              tilingCompareBy: (first, second) => second.compareTo(first),
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 80, height: 40, position: Offset(50, 50)),
+                FcoseNode(id: 'b', width: 40, height: 80, position: Offset(150, 50)),
+                FcoseNode(id: 'c', width: 60, height: 60, position: Offset(50, 150)),
+                FcoseNode(id: 'd', width: 100, height: 30, position: Offset(150, 150)),
+              ],
+            ),
+          );
+
+      // Differential fixture from cytoscape-fcose 2.2.0. Translation differs
+      // between adapters, so compare the invariant relative coordinates.
+      expect(result.positionOf('a') - result.positionOf('b'), const Offset(70, -20));
+      expect(result.positionOf('c') - result.positionOf('d'), const Offset(90, 15));
+      expect(result.positionOf('a') - result.positionOf('d'), const Offset(40, 75));
+    });
+
     test('matches upstream zero-degree dummy compound in a mixed root graph', () {
       final result =
           FcoseLayout(
@@ -1301,6 +1329,38 @@ void main() {
       final centerDistance = result.positionOf('a').distanceTo(result.positionOf('b'));
       expect(centerDistance, greaterThan(190));
       expect(result.rectOf('a').boundaryDistanceTo(result.rectOf('b')), closeTo(120, 12));
+    });
+
+    test('uses center distances for uniform leaf node force calculations', () {
+      FcoseResult run({required bool uniformNodeDimensions}) =>
+          FcoseLayout(
+            options: FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 1000,
+              tile: false,
+              idealEdgeLength: 80,
+              uniformNodeDimensions: uniformNodeDimensions,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 120, height: 40, position: Offset(0, 0)),
+                FcoseNode(id: 'b', width: 20, height: 100, position: Offset(300, 0)),
+              ],
+              edges: const [FcoseEdge(id: 'ab', source: 'a', target: 'b')],
+            ),
+          );
+
+      final clipped = run(uniformNodeDimensions: false);
+      final uniform = run(uniformNodeDimensions: true);
+
+      expect(clipped.positionOf('a').distanceTo(clipped.positionOf('b')), greaterThan(130));
+      expect(uniform.positionOf('a').distanceTo(uniform.positionOf('b')), closeTo(109.45297568384221, 1e-9));
+      expect(
+        uniform.positionOf('a').distanceTo(uniform.positionOf('b')),
+        lessThan(clipped.positionOf('a').distanceTo(clipped.positionOf('b'))),
+      );
     });
 
     test('matches upstream constrained three-node chain spacing', () {

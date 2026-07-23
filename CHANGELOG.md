@@ -13,3 +13,5 @@
   original-center relocation, and explicit typed packing controls.
 - Add layout-utilities-compatible incremental POSE component packing for
   `randomize: false`.
+- Add `uniformNodeDimensions` force semantics and custom `tilingCompareBy`
+  ordering with upstream-compatible ideal-row-width tiling.

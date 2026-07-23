@@ -357,7 +357,12 @@ final class FcoseLayout {
           forces[second.id] = forces[second.id]! - force;
           continue;
         }
-        var delta = firstRect.boundaryDisplacementTo(secondRect);
+        var delta =
+            options.uniformNodeDimensions &&
+                !graph.compounds.isCompound(first.id) &&
+                !graph.compounds.isCompound(second.id)
+            ? secondRect.center - firstRect.center
+            : firstRect.boundaryDisplacementTo(secondRect);
         final minimumComponentDistance = averageIdealLength / 10;
         delta = Offset(
           delta.x.abs() < minimumComponentDistance ? delta.x.sign * minimumComponentDistance : delta.x,
@@ -379,7 +384,10 @@ final class FcoseLayout {
         final target = edge.target;
         final sourceRect = rectangles[source]!;
         final targetRect = rectangles[target]!;
-        var delta = sourceRect.boundaryDisplacementTo(targetRect);
+        var delta =
+            options.uniformNodeDimensions && !graph.compounds.isCompound(source) && !graph.compounds.isCompound(target)
+            ? targetRect.center - sourceRect.center
+            : sourceRect.boundaryDisplacementTo(targetRect);
         if (delta.length < 1e-7) continue;
         delta = Offset(
           delta.x.abs() < _minimumSpringComponentLength ? delta.x.sign : delta.x,
@@ -637,6 +645,9 @@ final class FcoseLayout {
   }) {
     final indexed = members.indexed.map((entry) => (index: entry.$1, node: entry.$2)).toList()
       ..sort((first, second) {
+        final customOrder = options.tilingCompareBy?.call(first.node.id, second.node.id);
+        if (customOrder != null && customOrder != 0) return customOrder;
+        if (customOrder == 0) return first.index.compareTo(second.index);
         final firstArea = first.node.width * first.node.height;
         final secondArea = second.node.width * second.node.height;
         final areaOrder = secondArea.compareTo(firstArea);
@@ -651,65 +662,101 @@ final class FcoseLayout {
       centerY += position.y;
     }
     final center = Offset(centerX / nodes.length, centerY / nodes.length);
-    final rows = <List<FcoseNode>>[];
-    final rowWidths = <double>[];
-    final rowHeights = <double>[];
-    var width = horizontalInset * 2;
-    var height = verticalInset * 2;
-
-    int shortestRow() {
-      var result = 0;
-      for (var index = 1; index < rowWidths.length; index++) {
-        if (rowWidths[index] < rowWidths[result]) result = index;
-      }
-      return result;
+    double idealRowWidth(bool favorHorizontal) {
+      final averageWidth = nodes.fold(0.0, (sum, node) => sum + node.width) / nodes.length;
+      final averageHeight = nodes.fold(0.0, (sum, node) => sum + node.height) / nodes.length;
+      final horizontalPadding = options.tilingPaddingHorizontal;
+      final verticalPadding = options.tilingPaddingVertical;
+      final delta =
+          math.pow(verticalPadding - horizontalPadding, 2) +
+          4 * (averageWidth + horizontalPadding) * (averageHeight + verticalPadding) * nodes.length;
+      final horizontalCountDouble =
+          (horizontalPadding - verticalPadding + math.sqrt(delta)) / (2 * (averageWidth + horizontalPadding));
+      var horizontalCount = favorHorizontal ? horizontalCountDouble.ceil() : horizontalCountDouble.floor();
+      if (favorHorizontal && horizontalCount == horizontalCountDouble) horizontalCount++;
+      var result = horizontalCount * (averageWidth + horizontalPadding) - horizontalPadding;
+      result = math.max(result, nodes.map((node) => node.width).reduce(math.max));
+      return result + horizontalPadding * 2;
     }
 
-    bool canAddHorizontal(FcoseNode node) {
-      final shortest = shortestRow();
-      final minimumWidth = rowWidths[shortest];
-      if (minimumWidth + options.tilingPaddingHorizontal + node.width <= width) return true;
-      var heightDifference = 0.0;
-      if (rowHeights[shortest] < node.height && shortest > 0) {
-        heightDifference = node.height + options.tilingPaddingVertical - rowHeights[shortest];
+    ({List<List<FcoseNode>> rows, double width, double height}) organize(bool favorHorizontal) {
+      final rows = <List<FcoseNode>>[];
+      final rowWidths = <double>[];
+      final rowHeights = <double>[];
+      final targetRowWidth = options.tilingCompareBy == null ? null : idealRowWidth(favorHorizontal);
+      var width = horizontalInset * 2;
+      var height = verticalInset * 2;
+
+      int shortestRow() {
+        var result = 0;
+        for (var index = 1; index < rowWidths.length; index++) {
+          if (rowWidths[index] < rowWidths[result]) result = index;
+        }
+        return result;
       }
-      var addToRowRatio = width - minimumWidth >= node.width + options.tilingPaddingHorizontal
-          ? (height + heightDifference) / (minimumWidth + node.width + options.tilingPaddingHorizontal)
-          : (height + heightDifference) / width;
-      final newRowHeight = node.height + options.tilingPaddingVertical;
-      var addNewRowRatio = (height + newRowHeight) / (width < node.width ? node.width : width);
-      if (addNewRowRatio < 1) addNewRowRatio = 1 / addNewRowRatio;
-      if (addToRowRatio < 1) addToRowRatio = 1 / addToRowRatio;
-      return addToRowRatio < addNewRowRatio;
+
+      bool canAddHorizontal(FcoseNode node) {
+        if (targetRowWidth != null) {
+          return rowWidths.last + node.width + options.tilingPaddingHorizontal <= targetRowWidth;
+        }
+        final shortest = shortestRow();
+        final minimumWidth = rowWidths[shortest];
+        if (minimumWidth + options.tilingPaddingHorizontal + node.width <= width) return true;
+        var heightDifference = 0.0;
+        if (rowHeights[shortest] < node.height && shortest > 0) {
+          heightDifference = node.height + options.tilingPaddingVertical - rowHeights[shortest];
+        }
+        var addToRowRatio = width - minimumWidth >= node.width + options.tilingPaddingHorizontal
+            ? (height + heightDifference) / (minimumWidth + node.width + options.tilingPaddingHorizontal)
+            : (height + heightDifference) / width;
+        final newRowHeight = node.height + options.tilingPaddingVertical;
+        var addNewRowRatio = (height + newRowHeight) / (width < node.width ? node.width : width);
+        if (addNewRowRatio < 1) addNewRowRatio = 1 / addNewRowRatio;
+        if (addToRowRatio < 1) addToRowRatio = 1 / addToRowRatio;
+        return addToRowRatio < addNewRowRatio;
+      }
+
+      void insert(FcoseNode node, int rowIndex) {
+        if (rowIndex == rows.length) {
+          rows.add([]);
+          rowWidths.add(horizontalInset * 2);
+          rowHeights.add(0);
+        }
+        var newWidth = rowWidths[rowIndex] + node.width;
+        if (rows[rowIndex].isNotEmpty) newWidth += options.tilingPaddingHorizontal;
+        rowWidths[rowIndex] = newWidth;
+        width = math.max(width, newWidth);
+        final newHeight = node.height + (rowIndex > 0 ? options.tilingPaddingVertical : 0);
+        if (newHeight > rowHeights[rowIndex]) {
+          height += newHeight - rowHeights[rowIndex];
+          rowHeights[rowIndex] = newHeight;
+        }
+        rows[rowIndex].add(node);
+      }
+
+      for (final node in nodes) {
+        if (rows.isEmpty) {
+          insert(node, 0);
+        } else if (canAddHorizontal(node)) {
+          insert(node, targetRowWidth == null ? shortestRow() : rows.length - 1);
+        } else {
+          insert(node, rows.length);
+        }
+      }
+      return (rows: rows, width: width, height: height);
     }
 
-    void insert(FcoseNode node, int rowIndex) {
-      if (rowIndex == rows.length) {
-        rows.add([]);
-        rowWidths.add(horizontalInset * 2);
-        rowHeights.add(0);
-      }
-      var newWidth = rowWidths[rowIndex] + node.width;
-      if (rows[rowIndex].isNotEmpty) newWidth += options.tilingPaddingHorizontal;
-      rowWidths[rowIndex] = newWidth;
-      width = math.max(width, newWidth);
-      final newHeight = node.height + (rowIndex > 0 ? options.tilingPaddingVertical : 0);
-      if (newHeight > rowHeights[rowIndex]) {
-        height += newHeight - rowHeights[rowIndex];
-        rowHeights[rowIndex] = newHeight;
-      }
-      rows[rowIndex].add(node);
+    final horizontal = organize(true);
+    final vertical = options.tilingCompareBy == null ? horizontal : organize(false);
+    double normalizedRatio(({List<List<FcoseNode>> rows, double width, double height}) organization) {
+      final ratio = organization.width / organization.height;
+      return ratio < 1 ? 1 / ratio : ratio;
     }
 
-    for (final node in nodes) {
-      if (rows.isEmpty) {
-        insert(node, 0);
-      } else if (canAddHorizontal(node)) {
-        insert(node, shortestRow());
-      } else {
-        insert(node, rows.length);
-      }
-    }
+    final organization = normalizedRatio(vertical) < normalizedRatio(horizontal) ? vertical : horizontal;
+    final rows = organization.rows;
+    final width = organization.width;
+    final height = organization.height;
 
     final tiledPositions = <String, Offset>{};
     final left = center.x - width / 2 + horizontalInset;

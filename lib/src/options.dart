@@ -6,6 +6,8 @@ enum SamplingType { greedy, random }
 
 enum PackingUtility { adjustedFullness, weighted }
 
+typedef TilingComparator = int Function(String firstNodeId, String secondNodeId);
+
 /// Configuration corresponding to the public options of cytoscape-fcose 2.2.0.
 final class FcoseOptions {
   const FcoseOptions({
@@ -26,12 +28,14 @@ final class FcoseOptions {
     this.compoundGravityRange = 1.5,
     this.nestingFactor = 0.1,
     this.compoundPadding = 10,
+    this.uniformNodeDimensions = false,
     this.packComponents = true,
     this.componentSeparation = 80,
     this.desiredPackingAspectRatio = 1,
     this.polyominoGridSizeFactor = 1,
     this.packingUtility = PackingUtility.adjustedFullness,
     this.tile = true,
+    this.tilingCompareBy,
     this.tilingPaddingVertical = 10,
     this.tilingPaddingHorizontal = 10,
     this.initialEnergyOnIncremental = 0.3,
@@ -59,6 +63,12 @@ final class FcoseOptions {
   final double nestingFactor;
   final double compoundPadding;
 
+  /// Uses center-to-center spring and repulsion distances for leaf pairs.
+  ///
+  /// This matches fCoSE's performance hint and assumes leaf dimensions are
+  /// sufficiently uniform; it does not resize nodes.
+  final bool uniformNodeDimensions;
+
   /// Enables layout-utilities-style packing of disconnected components.
   final bool packComponents;
 
@@ -72,6 +82,10 @@ final class FcoseOptions {
   final double polyominoGridSizeFactor;
   final PackingUtility packingUtility;
   final bool tile;
+
+  /// Orders tiled siblings by node ID, using JavaScript `Array.sort` semantics.
+  final TilingComparator? tilingCompareBy;
+
   final double tilingPaddingVertical;
   final double tilingPaddingHorizontal;
   final double initialEnergyOnIncremental;

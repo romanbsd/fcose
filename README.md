@@ -68,7 +68,8 @@ outputs are captured once per layout run. Explicit values on `FcoseNode` and
 - sampled deterministic spectral initialization with root and nested-owner
   dummy connections for disconnected child components;
 - rectangle-clipped CoSE springs and overlap separation;
-- per-node repulsion, gravity, cooling, and convergence;
+- per-node repulsion, CoSE-clamped grid neighborhoods, gravity, cooling, and
+  convergence;
 - same-owner leaf reduction, ten-tick staged regrowth, and post-growth
   convergence/cooling;
 - live compound-node forces, nesting-aware edge lengths, and compound gravity;

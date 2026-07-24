@@ -762,6 +762,46 @@ void main() {
       expect(result.positionOf('c').y, closeTo(262.556534320479, 1e-9));
     });
 
+    test('matches upstream repulsion range when ideal edges are shorter than ten pixels', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 15,
+              idealEdgeLength: 1,
+              edgeElasticity: 0.45,
+              nodeRepulsion: 50,
+              gravity: 0,
+              initialEnergyOnIncremental: 0.03,
+              minTemperature: 0.01,
+              packComponents: false,
+              tile: false,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 2, height: 2, position: Offset(0, 0)),
+                FcoseNode(id: 'b', width: 2, height: 2, position: Offset(10, 0)),
+                FcoseNode(id: 'c', width: 2, height: 2, position: Offset(6, 10)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+                FcoseEdge(id: 'ca', source: 'c', target: 'a'),
+              ],
+            ),
+          );
+
+      expect(result.iterations, 15);
+      expect(result.positionOf('a').x, closeTo(1.1449371576834397, 1e-9));
+      expect(result.positionOf('a').y, closeTo(0.7837450070064254, 1e-9));
+      expect(result.positionOf('b').x, closeTo(9.050855058812843, 1e-9));
+      expect(result.positionOf('b').y, closeTo(0.7609344581942674, 1e-9));
+      expect(result.positionOf('c').x, closeTo(5.804207783503714, 1e-9));
+      expect(result.positionOf('c').y, closeTo(8.455320534799307, 1e-9));
+    });
+
     test('matches upstream per-node repulsion averaging', () {
       final result =
           FcoseLayout(

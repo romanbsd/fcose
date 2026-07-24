@@ -31,3 +31,5 @@
   semantics across flat and nested tiling.
 - Add per-node compound padding across bounds, nested tiling, force geometry,
   and component packing while retaining the layout-wide fallback.
+- Match CoSE's ten-pixel internal ideal-length floor when calculating sparse
+  repulsion-grid neighborhoods without changing configured spring lengths.

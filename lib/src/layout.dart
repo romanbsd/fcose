@@ -351,6 +351,7 @@ final class FcoseLayout {
     var repulsionPairs = <(FcoseNode, FcoseNode)>[];
     final averageIdealLength = _averageIdealEdgeLength(graph.edges);
     final totalDisplacementThreshold = 0.03 * averageIdealLength * graph.graph.nodes.length;
+    final repulsionRange = 2 * math.max(averageIdealLength, _minimumRepulsionRangeIdealEdgeLength).toDouble();
 
     for (var iteration = 0; iteration < maxIterations; iteration++) {
       final iterationNumber = iteration + 1;
@@ -407,7 +408,7 @@ final class FcoseLayout {
       ownerBounds.clear();
 
       if (iterationNumber % _repulsionGridRefreshPeriod == 1) {
-        repulsionPairs = _refreshRepulsionPairs(graph, rectangles, 2 * averageIdealLength);
+        repulsionPairs = _refreshRepulsionPairs(graph, rectangles, repulsionRange);
       }
       for (final (first, second) in repulsionPairs) {
         final firstRect = rectangles[first.id]!;
@@ -1340,6 +1341,13 @@ final class FcoseLayout {
 
 /// layout-base `LayoutConstants.SIMPLE_NODE_SIZE`, in logical pixels.
 const _layoutBaseSimpleNodeSize = 40.0;
+
+/// Minimum internal ideal edge length used only by CoSE's repulsion grid.
+///
+/// cose-base clamps `CoSELayout.idealEdgeLength` to 10 before calculating the
+/// two-edge-length neighborhood range. Springs, convergence, and constraint
+/// defaults continue using the real resolved average.
+const _minimumRepulsionRangeIdealEdgeLength = 10.0;
 
 /// `LEdge.updateLength()` snaps sub-pixel clipped spring components to their
 /// sign before calculating length, avoiding unstable near-axis projections.

@@ -15,6 +15,7 @@ final class _RelaxationTopology {
     List<RelativePlacementConstraint> constraints,
     Set<String> fixed,
     double defaultGap,
+    Set<String> crossAxisFixedGroups,
   ) {
     final nodeToGroup = <String, String>{};
     for (var index = 0; index < alignments.length; index++) {
@@ -39,6 +40,7 @@ final class _RelaxationTopology {
       (edges[target] ??= []).add((other: source, gap: gap, outgoing: false));
     }
     fixedGroups.addAll(members.entries.where((entry) => entry.value.any(fixed.contains)).map((entry) => entry.key));
+    fixedGroups.addAll(crossAxisFixedGroups.where(members.containsKey));
     _ordersByCheckpoint[0] = List.unmodifiable(order);
   }
 
@@ -115,12 +117,20 @@ final class ConstraintHandler {
     _horizontalConstraints,
     _fixedNodeIds,
     defaultGap,
+    const {},
   );
   late final _RelaxationTopology _verticalRelaxation = _RelaxationTopology(
     alignment.horizontal,
     _verticalConstraints,
     _fixedNodeIds,
     defaultGap,
+    {
+      // cose-base checks `fixedNodesOnHorizontal` while relaxing the vertical
+      // axis. Its dummy IDs are shared by index across alignment directions,
+      // so a fixed vertical group also fixes the same-index horizontal dummy.
+      for (final (index, group) in alignment.vertical.indexed)
+        if (group.any(_fixedNodeIds.contains)) '@alignment:$index',
+    },
   );
 
   /// Rotates and, when beneficial, reflects a randomized spectral draft toward
@@ -424,18 +434,15 @@ final class ConstraintHandler {
       _verticalTemporary ??= temporary;
     }
     for (final group in order) {
-      var displacement = topology.fixedGroups.contains(group)
-          ? 0.0
-          : coordinate(displacements[topology.members[group]!.first]!);
-      if (!topology.fixedGroups.contains(group)) {
-        for (final edge in topology.edges[group] ?? const []) {
-          final difference = edge.outgoing
-              ? temporary[edge.other]! - temporary[group]! - displacement
-              : temporary[group]! - temporary[edge.other]! + displacement;
-          if (difference < edge.gap) {
-            final correction = edge.gap - difference;
-            displacement += edge.outgoing ? -correction : correction;
-          }
+      if (topology.fixedGroups.contains(group)) continue;
+      var displacement = coordinate(displacements[topology.members[group]!.first]!);
+      for (final edge in topology.edges[group] ?? const []) {
+        final difference = edge.outgoing
+            ? temporary[edge.other]! - temporary[group]! - displacement
+            : temporary[group]! - temporary[edge.other]! + displacement;
+        if (difference < edge.gap) {
+          final correction = edge.gap - difference;
+          displacement += edge.outgoing ? -correction : correction;
         }
       }
       temporary[group] = temporary[group]! + displacement;

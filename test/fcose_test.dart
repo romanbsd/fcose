@@ -572,6 +572,44 @@ void main() {
       expect(displacements['a'], const Offset(-20, 0));
       expect(displacements['b'], Offset.zero);
     });
+
+    test('matches cose-base cross-axis alignment dummy collisions', () {
+      final positions = <String, Offset>{
+        'a1': Offset.zero,
+        'b1': const Offset(0, 10),
+        'a2': const Offset(120, 130),
+        'b2': const Offset(400, 130),
+        'free': const Offset(200, 250),
+      };
+      final displacements = <String, Offset>{
+        'a1': const Offset(0, 100),
+        'b1': const Offset(0, 5),
+        'a2': const Offset(0, 10),
+        'b2': const Offset(0, 20),
+        'free': const Offset(0, -5),
+      };
+
+      ConstraintHandler(
+        fixedNodes: const [FixedNodeConstraint('a1', Offset.zero)],
+        alignment: const AlignmentConstraint(
+          vertical: [
+            ['a1', 'b1'],
+          ],
+          horizontal: [
+            ['a2', 'b2'],
+          ],
+        ),
+        relativePlacements: const [
+          RelativePlacementConstraint.vertical('b1', 'b2', gap: 120),
+          RelativePlacementConstraint.vertical('a2', 'free', gap: 120),
+        ],
+        defaultGap: 50,
+      ).constrainDisplacements(positions, displacements, iteration: 1);
+
+      expect(displacements['a1'], Offset.zero);
+      expect(displacements['a2']!.y, 15);
+      expect(displacements['b2']!.y, 15);
+    });
   });
 
   group('fCoSE layout', () {
@@ -1212,6 +1250,68 @@ void main() {
       expect(result.positionOf('anchor'), const Offset(0, 0));
       expect(result.iterations, 20);
       expect(result.positionOf('sibling').x, inExclusiveRange(20, 50));
+    });
+
+    test('matches upstream constraints across deeply nested compounds', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              seed: 1,
+              maxIterations: 2500,
+              idealEdgeLength: 120,
+              edgeElasticity: 0.45,
+              compoundPadding: 40,
+              fixedNodes: [FixedNodeConstraint('a1', Offset.zero)],
+              alignment: AlignmentConstraint(
+                vertical: [
+                  ['a1', 'b1'],
+                ],
+                horizontal: [
+                  ['a2', 'b2'],
+                ],
+              ),
+              relativePlacements: [
+                RelativePlacementConstraint.horizontal('a1', 'a2', gap: 120),
+                RelativePlacementConstraint.vertical('b1', 'b2', gap: 120),
+                RelativePlacementConstraint.vertical('a2', 'free', gap: 120),
+              ],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'left'),
+                FcoseNode(id: 'left-inner', parentId: 'left'),
+                FcoseNode(id: 'a1', parentId: 'left-inner', width: 80, height: 80, position: Offset.zero),
+                FcoseNode(id: 'a2', parentId: 'left-inner', width: 80, height: 80, position: Offset(80, 80)),
+                FcoseNode(id: 'right'),
+                FcoseNode(id: 'right-inner', parentId: 'right'),
+                FcoseNode(id: 'b1', parentId: 'right-inner', width: 80, height: 80, position: Offset(320, 0)),
+                FcoseNode(id: 'b2', parentId: 'right-inner', width: 80, height: 80, position: Offset(400, 80)),
+                FcoseNode(id: 'free', width: 80, height: 80, position: Offset(200, 260)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'a1-a2', source: 'a1', target: 'a2'),
+                FcoseEdge(id: 'b1-b2', source: 'b1', target: 'b2'),
+                FcoseEdge(id: 'a1-b1', source: 'a1', target: 'b1'),
+                FcoseEdge(id: 'a2-free', source: 'a2', target: 'free'),
+                FcoseEdge(id: 'b2-free', source: 'b2', target: 'free'),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('a1'), Offset.zero);
+      expect(result.positionOf('b1').x, closeTo(0, 1e-9));
+      expect(result.positionOf('b1').y, closeTo(10, 1e-9));
+      expect(result.positionOf('a2').x, closeTo(120, 1e-9));
+      expect(result.positionOf('a2').y, closeTo(217.37804058764965, 0.5));
+      expect(result.positionOf('b2').x, closeTo(409.1035712471904, 0.5));
+      expect(result.positionOf('b2').y, closeTo(result.positionOf('a2').y, 1e-9));
+      expect(result.positionOf('free').x, closeTo(265.11546183823043, 0.5));
+      expect(result.positionOf('free').y, closeTo(531.5464187729549, 0.5));
+      expect(result.rectOf('left').containsRect(result.rectOf('left-inner')), isTrue);
+      expect(result.rectOf('right').containsRect(result.rectOf('right-inner')), isTrue);
     });
 
     test('adds layout-base smart size to cross-compound edge lengths', () {

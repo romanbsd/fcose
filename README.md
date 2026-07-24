@@ -82,6 +82,8 @@ outputs are captured once per layout run. Explicit values on `FcoseNode` and
 - bottom-up compound bounds with padding and label geometry;
 - transformed and displacement-relaxed fixed, alignment, and DAG placement
   constraints;
+- cose-base-compatible cross-axis alignment dummy handling, including fixed
+  groups and deeply nested compound layouts;
 - typed per-element force resolvers, first-edge handling for parallel edges,
   and average resolved ideal length semantics for implicit constraint gaps;
 - upstream constraint interactions that disable tiling and component packing;
@@ -96,8 +98,8 @@ outputs are captured once per layout run. Explicit values on `FcoseNode` and
 
 The largest remaining parity work is:
 
-- broader differential coverage for uncommon nested-compound and constraint
-  combinations;
+- broader randomized differential coverage for uncommon nested-compound and
+  constraint combinations;
 - optional adapter conveniences for upstream's zero-argument lazy tiling
   padding callbacks, whose values can already be resolved before constructing
   `FcoseOptions`.

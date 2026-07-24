@@ -23,3 +23,5 @@
   run with explicit element values taking precedence.
 - Match upstream first-edge filtering before callback evaluation and use the
   average resolved ideal edge length for implicit relative-placement gaps.
+- Match cose-base's cross-axis alignment dummy collision during constrained
+  displacement relaxation and add a deeply nested compound differential case.

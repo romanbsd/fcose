@@ -25,3 +25,5 @@
   average resolved ideal edge length for implicit relative-placement gaps.
 - Match cose-base's cross-axis alignment dummy collision during constrained
   displacement relaxation and add a deeply nested compound differential case.
+- Match cose-base's dimension-aware defaults for omitted relative-placement
+  gaps and cover mixed-size flat and nested compound differentials.

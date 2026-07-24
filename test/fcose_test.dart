@@ -1314,6 +1314,68 @@ void main() {
       expect(result.rectOf('right').containsRect(result.rectOf('right-inner')), isTrue);
     });
 
+    test('enforces upstream implicit gaps across mixed-size nested compounds', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              step: LayoutStep.enforced,
+              seed: 1,
+              maxIterations: 2500,
+              edgeElasticity: 0.45,
+              compoundPadding: 40,
+              fixedNodes: [FixedNodeConstraint('a1', Offset.zero)],
+              alignment: AlignmentConstraint(
+                vertical: [
+                  ['a1', 'b1'],
+                ],
+                horizontal: [
+                  ['a2', 'b2'],
+                ],
+              ),
+              relativePlacements: [
+                RelativePlacementConstraint.horizontal('a1', 'a2'),
+                RelativePlacementConstraint.vertical('b1', 'b2'),
+                RelativePlacementConstraint.vertical('a2', 'free'),
+              ],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'left'),
+                FcoseNode(id: 'left-inner', parentId: 'left'),
+                FcoseNode(id: 'a1', parentId: 'left-inner', width: 40, height: 60, position: Offset.zero),
+                FcoseNode(id: 'a2', parentId: 'left-inner', width: 100, height: 20, position: Offset(80, 80)),
+                FcoseNode(id: 'right'),
+                FcoseNode(id: 'right-inner', parentId: 'right'),
+                FcoseNode(id: 'b1', parentId: 'right-inner', width: 30, height: 80, position: Offset(320, 0)),
+                FcoseNode(id: 'b2', parentId: 'right-inner', width: 70, height: 40, position: Offset(400, 80)),
+                FcoseNode(id: 'free', width: 60, height: 90, position: Offset(200, 260)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'a1-a2', source: 'a1', target: 'a2', idealLength: 80),
+                FcoseEdge(id: 'b1-b2', source: 'b1', target: 'b2', idealLength: 160),
+                FcoseEdge(id: 'a1-b1', source: 'a1', target: 'b1', idealLength: 100),
+                FcoseEdge(id: 'a2-free', source: 'a2', target: 'free', idealLength: 140),
+                FcoseEdge(id: 'b2-free', source: 'b2', target: 'free', idealLength: 120),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('a1'), Offset.zero);
+      expect(result.positionOf('a2').x, closeTo(190, 1e-9));
+      expect(result.positionOf('a2').y, closeTo(132.5, 1e-9));
+      expect(result.positionOf('b1').x, closeTo(0, 1e-9));
+      expect(result.positionOf('b1').y, closeTo(-47.5, 1e-9));
+      expect(result.positionOf('b2').x, closeTo(400, 1e-9));
+      expect(result.positionOf('b2').y, closeTo(result.positionOf('a2').y, 1e-9));
+      expect(result.positionOf('free').x, closeTo(200, 1e-9));
+      expect(result.positionOf('free').y, closeTo(307.5, 1e-9));
+      expect(result.rectOf('left').containsRect(result.rectOf('left-inner')), isTrue);
+      expect(result.rectOf('right').containsRect(result.rectOf('right-inner')), isTrue);
+    });
+
     test('adds layout-base smart size to cross-compound edge lengths', () {
       final result =
           FcoseLayout(
@@ -1369,7 +1431,7 @@ void main() {
       expect(result.positionOf('c').x - result.positionOf('b').x, greaterThanOrEqualTo(80));
     });
 
-    test('uses average resolved edge length for an omitted relative-placement gap', () {
+    test('uses average resolved edge length in an omitted relative-placement gap', () {
       final result =
           FcoseLayout(
             options: const FcoseOptions(
@@ -1393,7 +1455,39 @@ void main() {
             ),
           );
 
-      expect(result.positionOf('c').x - result.positionOf('a').x, closeTo(120, 1e-9));
+      expect(result.positionOf('c').x - result.positionOf('a').x, closeTo(150, 1e-9));
+    });
+
+    test('preserves upstream mixed-size implicit gaps through force refinement', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              relativePlacements: [
+                RelativePlacementConstraint.horizontal('a', 'b'),
+                RelativePlacementConstraint.vertical('c', 'd'),
+              ],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 40, height: 60, position: Offset.zero),
+                FcoseNode(id: 'b', width: 100, height: 20, position: Offset(10, 0)),
+                FcoseNode(id: 'c', width: 30, height: 80, position: Offset(0, 10)),
+                FcoseNode(id: 'd', width: 70, height: 40, position: Offset(0, 20)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b', idealLength: 80),
+                FcoseEdge(id: 'cd', source: 'c', target: 'd', idealLength: 160),
+              ],
+            ),
+          );
+
+      expect(result.positionOf('b').x - result.positionOf('a').x, closeTo(190, 1e-9));
+      expect(result.positionOf('b').y - result.positionOf('a').y, closeTo(-0.035872655514854, 1e-9));
+      expect(result.positionOf('d').x - result.positionOf('c').x, closeTo(-1.88312109249442, 1e-9));
+      expect(result.positionOf('d').y - result.positionOf('c').y, closeTo(221.92308086131816, 1e-9));
     });
 
     test('resolves only the first non-loop edge between each node pair', () {
@@ -1433,7 +1527,7 @@ void main() {
 
       expect(idealLengthCalls, ['ab', 'bc']);
       expect(elasticityCalls, ['ab', 'bc']);
-      expect(result.positionOf('c').x - result.positionOf('a').x, closeTo(120, 1e-9));
+      expect(result.positionOf('c').x - result.positionOf('a').x, closeTo(150, 1e-9));
     });
 
     test('exposes the transformed constraint-debug stage without refinement', () {
@@ -1892,7 +1986,7 @@ void main() {
       );
     });
 
-    test('validates fixed-node constraints against the average resolved edge length', () {
+    test('validates fixed-node constraints against the dimension-aware default gap', () {
       final graph = FcoseGraph(
         nodes: const [
           FcoseNode(id: 'a'),
@@ -1907,7 +2001,7 @@ void main() {
       expect(
         () => FcoseLayout(
           options: const FcoseOptions(
-            fixedNodes: [FixedNodeConstraint('a', Offset.zero), FixedNodeConstraint('c', Offset(100, 0))],
+            fixedNodes: [FixedNodeConstraint('a', Offset.zero), FixedNodeConstraint('c', Offset(135, 0))],
             relativePlacements: [RelativePlacementConstraint.horizontal('a', 'c')],
           ),
         ).run(graph),

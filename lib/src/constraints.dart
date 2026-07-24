@@ -29,5 +29,10 @@ final class RelativePlacementConstraint {
   /// Right node for horizontal constraints, or bottom node for vertical constraints.
   final String second;
   final RelativePlacementAxis axis;
+
+  /// Required center-to-center separation on [axis].
+  ///
+  /// When omitted, fCoSE uses the average resolved ideal edge length plus half
+  /// of each endpoint's size on the constrained axis.
   final double? gap;
 }

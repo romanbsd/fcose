@@ -62,7 +62,7 @@ final class FcoseLayout {
     final originalComponentCenters = _componentCenters(working, originalGeometry);
     final originalBoundsCenter = _graphBounds(working, originalGeometry).center;
     var positions = _initialPositions(working, random);
-    final constraintHandler = _constraintHandler(defaultEdgeLength);
+    final constraintHandler = _constraintHandler(resolvedGraph, defaultEdgeLength);
     final runsCosePipeline = options.quality != LayoutQuality.draft;
     final transformsConstraints =
         runsCosePipeline &&
@@ -1109,13 +1109,41 @@ final class FcoseLayout {
     return FcoseResult(positions: restoredPositions, rectangles: restoredRectangles, iterations: result.iterations);
   }
 
-  ConstraintHandler _constraintHandler(double defaultGap) => ConstraintHandler(
+  ConstraintHandler _constraintHandler(FcoseGraph graph, double defaultGap) => ConstraintHandler(
     fixedNodes: options.fixedNodes,
     alignment: options.alignment,
-    relativePlacements: options.relativePlacements,
+    relativePlacements: [
+      for (final constraint in options.relativePlacements)
+        switch (constraint.axis) {
+          RelativePlacementAxis.horizontal => RelativePlacementConstraint.horizontal(
+            constraint.first,
+            constraint.second,
+            gap: _relativePlacementGap(graph, constraint, defaultGap),
+          ),
+          RelativePlacementAxis.vertical => RelativePlacementConstraint.vertical(
+            constraint.first,
+            constraint.second,
+            gap: _relativePlacementGap(graph, constraint, defaultGap),
+          ),
+        },
+    ],
     defaultGap: defaultGap,
     seed: options.seed,
   );
+
+  /// cose-base interprets an omitted placement gap as a boundary-to-boundary
+  /// ideal edge length, then converts it to a center-to-center constraint by
+  /// adding the two endpoint half-sizes on the constrained axis.
+  double _relativePlacementGap(FcoseGraph graph, RelativePlacementConstraint constraint, double defaultEdgeLength) {
+    if (constraint.gap case final gap?) return gap;
+    final first = graph.nodeById[constraint.first]!;
+    final second = graph.nodeById[constraint.second]!;
+    final endpointSize = switch (constraint.axis) {
+      RelativePlacementAxis.horizontal => first.width + second.width,
+      RelativePlacementAxis.vertical => first.height + second.height,
+    };
+    return defaultEdgeLength + endpointSize / 2;
+  }
 
   bool get _hasConstraints =>
       options.fixedNodes.isNotEmpty ||
@@ -1231,7 +1259,7 @@ final class FcoseLayout {
       final second = fixed[constraint.second];
       if (first == null || second == null) continue;
       final actual = constraint.axis == RelativePlacementAxis.horizontal ? second.x - first.x : second.y - first.y;
-      if (actual < (constraint.gap ?? defaultGap)) {
+      if (actual < _relativePlacementGap(graph, constraint, defaultGap)) {
         throw ArgumentError.value(constraint, 'relativePlacements', 'fixed node positions contradict the required gap');
       }
     }

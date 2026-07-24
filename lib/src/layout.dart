@@ -12,6 +12,8 @@ import 'pose_packing.dart';
 import 'random.dart';
 import 'spectral.dart';
 
+typedef _TilingPadding = ({double horizontal, double vertical});
+
 /// Immutable output of an fCoSE layout run.
 final class FcoseResult {
   FcoseResult({required Map<String, Offset> positions, required Map<String, Rect> rectangles, required this.iterations})
@@ -47,7 +49,8 @@ final class FcoseLayout {
   final FcoseOptions options;
 
   FcoseResult run(FcoseGraph graph) {
-    _validateOptions();
+    final tilingPadding = _resolveTilingPadding();
+    _validateOptions(tilingPadding);
     final resolvedGraph = _resolveElementOptions(graph);
     if (resolvedGraph.nodes.isEmpty) {
       _validateConstraints(resolvedGraph, options.idealEdgeLength);
@@ -78,7 +81,7 @@ final class FcoseLayout {
     }
 
     if (_shouldTileFlatZeroDegreeNodes(working)) {
-      _tileFlatZeroDegreeNodes(working, positions);
+      _tileFlatZeroDegreeNodes(working, positions, tilingPadding);
       final rectangles = working.compounds.rectangles(positions, padding: options.compoundPadding);
       final effectiveMax = math.max(options.maxIterations, _minimumIterationsPerNode);
       return FcoseResult(
@@ -88,7 +91,7 @@ final class FcoseLayout {
       );
     }
 
-    final tiling = _prepareTiling(resolvedGraph, positions);
+    final tiling = _prepareTiling(resolvedGraph, positions, tilingPadding);
     if (tiling != null) {
       working = _WorkingGraph(tiling.graph);
       positions = tiling.positions;
@@ -683,13 +686,13 @@ final class FcoseLayout {
       graph.graph.nodes.length > 1 &&
       graph.graph.nodes.length == graph.leaves.length;
 
-  void _tileFlatZeroDegreeNodes(_WorkingGraph graph, Map<String, Offset> positions) {
+  void _tileFlatZeroDegreeNodes(_WorkingGraph graph, Map<String, Offset> positions, _TilingPadding tilingPadding) {
     // cytoscape-fcose relocates every unconstrained component after CoSE so
     // that its geometry bounding-box center remains at the pre-layout center.
     // This differs from tileNodes(), which organizes rows around the average
     // of the input node centers.
     final originalBoundsCenter = _leafBounds(graph.leaves, positions).center;
-    final organization = _tileNodes(graph.leaves, positions);
+    final organization = _tileNodes(graph.leaves, positions, tilingPadding: tilingPadding);
     positions.addAll(organization.positions);
 
     final tiledBoundsCenter = _leafBounds(graph.leaves, positions).center;
@@ -704,6 +707,7 @@ final class FcoseLayout {
     Map<String, Offset> positions, {
     double horizontalInset = 0,
     double verticalInset = 0,
+    required _TilingPadding tilingPadding,
   }) {
     final indexed = members.indexed.map((entry) => (index: entry.$1, node: entry.$2)).toList()
       ..sort((first, second) {
@@ -727,8 +731,8 @@ final class FcoseLayout {
     double idealRowWidth(bool favorHorizontal) {
       final averageWidth = nodes.fold(0.0, (sum, node) => sum + node.width) / nodes.length;
       final averageHeight = nodes.fold(0.0, (sum, node) => sum + node.height) / nodes.length;
-      final horizontalPadding = options.tilingPaddingHorizontal;
-      final verticalPadding = options.tilingPaddingVertical;
+      final horizontalPadding = tilingPadding.horizontal;
+      final verticalPadding = tilingPadding.vertical;
       final delta =
           math.pow(verticalPadding - horizontalPadding, 2) +
           4 * (averageWidth + horizontalPadding) * (averageHeight + verticalPadding) * nodes.length;
@@ -759,19 +763,19 @@ final class FcoseLayout {
 
       bool canAddHorizontal(FcoseNode node) {
         if (targetRowWidth != null) {
-          return rowWidths.last + node.width + options.tilingPaddingHorizontal <= targetRowWidth;
+          return rowWidths.last + node.width + tilingPadding.horizontal <= targetRowWidth;
         }
         final shortest = shortestRow();
         final minimumWidth = rowWidths[shortest];
-        if (minimumWidth + options.tilingPaddingHorizontal + node.width <= width) return true;
+        if (minimumWidth + tilingPadding.horizontal + node.width <= width) return true;
         var heightDifference = 0.0;
         if (rowHeights[shortest] < node.height && shortest > 0) {
-          heightDifference = node.height + options.tilingPaddingVertical - rowHeights[shortest];
+          heightDifference = node.height + tilingPadding.vertical - rowHeights[shortest];
         }
-        var addToRowRatio = width - minimumWidth >= node.width + options.tilingPaddingHorizontal
-            ? (height + heightDifference) / (minimumWidth + node.width + options.tilingPaddingHorizontal)
+        var addToRowRatio = width - minimumWidth >= node.width + tilingPadding.horizontal
+            ? (height + heightDifference) / (minimumWidth + node.width + tilingPadding.horizontal)
             : (height + heightDifference) / width;
-        final newRowHeight = node.height + options.tilingPaddingVertical;
+        final newRowHeight = node.height + tilingPadding.vertical;
         var addNewRowRatio = (height + newRowHeight) / (width < node.width ? node.width : width);
         if (addNewRowRatio < 1) addNewRowRatio = 1 / addNewRowRatio;
         if (addToRowRatio < 1) addToRowRatio = 1 / addToRowRatio;
@@ -785,10 +789,10 @@ final class FcoseLayout {
           rowHeights.add(0);
         }
         var newWidth = rowWidths[rowIndex] + node.width;
-        if (rows[rowIndex].isNotEmpty) newWidth += options.tilingPaddingHorizontal;
+        if (rows[rowIndex].isNotEmpty) newWidth += tilingPadding.horizontal;
         rowWidths[rowIndex] = newWidth;
         width = math.max(width, newWidth);
-        final newHeight = node.height + (rowIndex > 0 ? options.tilingPaddingVertical : 0);
+        final newHeight = node.height + (rowIndex > 0 ? tilingPadding.vertical : 0);
         if (newHeight > rowHeights[rowIndex]) {
           height += newHeight - rowHeights[rowIndex];
           rowHeights[rowIndex] = newHeight;
@@ -828,15 +832,15 @@ final class FcoseLayout {
       var maximumHeight = 0.0;
       for (final node in row) {
         tiledPositions[node.id] = Offset(x + node.width / 2, top + node.height / 2);
-        x += node.width + options.tilingPaddingHorizontal;
+        x += node.width + tilingPadding.horizontal;
         maximumHeight = math.max(maximumHeight, node.height);
       }
-      top += maximumHeight + options.tilingPaddingVertical;
+      top += maximumHeight + tilingPadding.vertical;
     }
     return _TiledOrganization(positions: tiledPositions, center: center, width: width, height: height);
   }
 
-  _TilingPlan? _prepareTiling(FcoseGraph graph, Map<String, Offset> initialPositions) {
+  _TilingPlan? _prepareTiling(FcoseGraph graph, Map<String, Offset> initialPositions, _TilingPadding tilingPadding) {
     if (!options.tile || options.quality == LayoutQuality.draft || _hasConstraints) return null;
 
     final directDegree = {for (final node in graph.nodes) node.id: 0};
@@ -889,6 +893,7 @@ final class FcoseLayout {
         positions,
         horizontalInset: options.compoundPadding,
         verticalInset: options.compoundPadding,
+        tilingPadding: tilingPadding,
       );
       final proxy = _tileProxy(original, organization);
       nodesById[compoundId] = proxy.node;
@@ -928,7 +933,13 @@ final class FcoseLayout {
         dummyId = 'DummyCompound_${entry.key ?? 'undefined'}_${collisionIndex++}';
       }
       final inset = entry.key == null ? 0.0 : options.compoundPadding;
-      final organization = _tileNodes(entry.value, positions, horizontalInset: inset, verticalInset: inset);
+      final organization = _tileNodes(
+        entry.value,
+        positions,
+        horizontalInset: inset,
+        verticalInset: inset,
+        tilingPadding: tilingPadding,
+      );
       final dummy = FcoseNode(
         id: dummyId,
         parentId: entry.key,
@@ -1286,14 +1297,23 @@ final class FcoseLayout {
     return bounds;
   }
 
-  void _validateOptions() {
+  _TilingPadding _resolveTilingPadding() {
+    if (options.quality == LayoutQuality.draft) {
+      return (horizontal: options.tilingPaddingHorizontal, vertical: options.tilingPaddingVertical);
+    }
+    final vertical = options.tilingPaddingVerticalFor?.call() ?? options.tilingPaddingVertical;
+    final horizontal = options.tilingPaddingHorizontalFor?.call() ?? options.tilingPaddingHorizontal;
+    return (horizontal: horizontal, vertical: vertical);
+  }
+
+  void _validateOptions(_TilingPadding tilingPadding) {
     if (options.maxIterations < 1 || options.sampleSize < 1) {
       throw ArgumentError('maxIterations and sampleSize must be positive');
     }
     if (options.idealEdgeLength <= 0 || options.nodeSeparation <= 0) {
       throw ArgumentError('layout lengths must be positive');
     }
-    if (options.tilingPaddingHorizontal < 0 || options.tilingPaddingVertical < 0) {
+    if (tilingPadding.horizontal < 0 || tilingPadding.vertical < 0) {
       throw ArgumentError('tiling padding must not be negative');
     }
     if (options.componentSeparation < 0 ||

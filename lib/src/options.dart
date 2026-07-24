@@ -14,6 +14,7 @@ typedef TilingComparator = int Function(String firstNodeId, String secondNodeId)
 typedef NodeRepulsionResolver = double Function(FcoseNode node);
 typedef IdealEdgeLengthResolver = double Function(FcoseEdge edge);
 typedef EdgeElasticityResolver = double Function(FcoseEdge edge);
+typedef TilingPaddingResolver = double Function();
 
 /// Configuration corresponding to the public options of cytoscape-fcose 2.2.0.
 final class FcoseOptions {
@@ -48,7 +49,9 @@ final class FcoseOptions {
     this.tile = true,
     this.tilingCompareBy,
     this.tilingPaddingVertical = 10,
+    this.tilingPaddingVerticalFor,
     this.tilingPaddingHorizontal = 10,
+    this.tilingPaddingHorizontalFor,
     this.initialEnergyOnIncremental = 0.3,
     this.minTemperature = 0.04,
     this.fixedNodes = const [],
@@ -121,7 +124,19 @@ final class FcoseOptions {
   final TilingComparator? tilingCompareBy;
 
   final double tilingPaddingVertical;
+
+  /// Resolves upstream's function-valued vertical tiling padding option.
+  ///
+  /// The callback overrides [tilingPaddingVertical] and is evaluated once per
+  /// non-draft layout run.
+  final TilingPaddingResolver? tilingPaddingVerticalFor;
   final double tilingPaddingHorizontal;
+
+  /// Resolves upstream's function-valued horizontal tiling padding option.
+  ///
+  /// The callback overrides [tilingPaddingHorizontal] and is evaluated once
+  /// per non-draft layout run.
+  final TilingPaddingResolver? tilingPaddingHorizontalFor;
   final double initialEnergyOnIncremental;
   final double minTemperature;
   final List<FixedNodeConstraint> fixedNodes;

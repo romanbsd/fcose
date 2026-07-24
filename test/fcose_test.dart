@@ -1015,6 +1015,159 @@ void main() {
       expect(result.positionOf('d'), const Offset(145, 145));
     });
 
+    test('resolves lazy tiling padding once per run and applies it to flat tiling', () {
+      var horizontalCalls = 0;
+      var verticalCalls = 0;
+      final callbackOrder = <String>[];
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'a', width: 80, height: 80, position: Offset(50, 50)),
+          FcoseNode(id: 'b', width: 80, height: 80, position: Offset(150, 50)),
+          FcoseNode(id: 'c', width: 80, height: 80, position: Offset(50, 150)),
+          FcoseNode(id: 'd', width: 80, height: 80, position: Offset(150, 150)),
+        ],
+      );
+      final lazyLayout = FcoseLayout(
+        options: FcoseOptions(
+          quality: LayoutQuality.proof,
+          randomize: false,
+          maxIterations: 2,
+          tile: true,
+          tilingPaddingHorizontal: 1,
+          tilingPaddingVertical: 2,
+          tilingPaddingHorizontalFor: () {
+            horizontalCalls++;
+            callbackOrder.add('horizontal');
+            return 26;
+          },
+          tilingPaddingVerticalFor: () {
+            verticalCalls++;
+            callbackOrder.add('vertical');
+            return 14;
+          },
+        ),
+      );
+      final eagerLayout = FcoseLayout(
+        options: const FcoseOptions(
+          quality: LayoutQuality.proof,
+          randomize: false,
+          maxIterations: 2,
+          tile: true,
+          tilingPaddingHorizontal: 26,
+          tilingPaddingVertical: 14,
+        ),
+      );
+
+      final first = lazyLayout.run(graph);
+      final expected = eagerLayout.run(graph);
+      final second = lazyLayout.run(graph);
+
+      expect(first.positions, expected.positions);
+      expect(second.positions, expected.positions);
+      expect(horizontalCalls, 2);
+      expect(verticalCalls, 2);
+      expect(callbackOrder, ['vertical', 'horizontal', 'vertical', 'horizontal']);
+    });
+
+    test('applies lazy tiling padding through nested compound restoration', () {
+      var horizontalCalls = 0;
+      var verticalCalls = 0;
+      final graph = FcoseGraph(
+        nodes: const [
+          FcoseNode(id: 'outer'),
+          FcoseNode(id: 'inner', parentId: 'outer'),
+          FcoseNode(id: 'a', parentId: 'inner', width: 60, height: 30, position: Offset(20, 20)),
+          FcoseNode(id: 'b', parentId: 'inner', width: 30, height: 60, position: Offset(160, 30)),
+          FcoseNode(id: 'c', parentId: 'outer', width: 40, height: 40, position: Offset(80, 160)),
+          FcoseNode(id: 'x', position: Offset(300, 50)),
+          FcoseNode(id: 'y', position: Offset(420, 50)),
+        ],
+        edges: const [FcoseEdge(id: 'xy', source: 'x', target: 'y')],
+      );
+
+      final lazy = FcoseLayout(
+        options: FcoseOptions(
+          quality: LayoutQuality.proof,
+          randomize: false,
+          maxIterations: 10,
+          tile: true,
+          tilingPaddingHorizontalFor: () {
+            horizontalCalls++;
+            return 24;
+          },
+          tilingPaddingVerticalFor: () {
+            verticalCalls++;
+            return 18;
+          },
+        ),
+      ).run(graph);
+      final eager = FcoseLayout(
+        options: const FcoseOptions(
+          quality: LayoutQuality.proof,
+          randomize: false,
+          maxIterations: 10,
+          tile: true,
+          tilingPaddingHorizontal: 24,
+          tilingPaddingVertical: 18,
+        ),
+      ).run(graph);
+
+      expect(lazy.positions, eager.positions);
+      expect(lazy.rectangles.keys.toSet(), eager.rectangles.keys.toSet());
+      for (final id in eager.rectangles.keys) {
+        final actual = lazy.rectOf(id);
+        final expected = eager.rectOf(id);
+        expect(
+          [actual.left, actual.top, actual.width, actual.height],
+          [expected.left, expected.top, expected.width, expected.height],
+          reason: id,
+        );
+      }
+      expect(horizontalCalls, 1);
+      expect(verticalCalls, 1);
+    });
+
+    test('does not resolve lazy tiling padding for draft quality', () {
+      var calls = 0;
+      final result =
+          FcoseLayout(
+            options: FcoseOptions(
+              quality: LayoutQuality.draft,
+              randomize: false,
+              packComponents: false,
+              tilingPaddingHorizontalFor: () {
+                calls++;
+                return 24;
+              },
+              tilingPaddingVerticalFor: () {
+                calls++;
+                return 18;
+              },
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', position: Offset.zero),
+                FcoseNode(id: 'b', position: Offset(100, 0)),
+              ],
+              edges: const [FcoseEdge(id: 'ab', source: 'a', target: 'b')],
+            ),
+          );
+
+      expect(result.positionOf('a'), Offset.zero);
+      expect(result.positionOf('b'), const Offset(100, 0));
+      expect(calls, 0);
+    });
+
+    test('validates resolved lazy tiling padding before layout', () {
+      expect(
+        () => FcoseLayout(
+          options: FcoseOptions(quality: LayoutQuality.proof, tilingPaddingHorizontalFor: () => -1),
+        ).run(FcoseGraph(nodes: const [FcoseNode(id: 'a')])),
+        throwsArgumentError,
+      );
+    });
+
     test('matches upstream area-ordered tiling for mixed node sizes', () {
       final result =
           FcoseLayout(

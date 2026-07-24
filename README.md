@@ -78,6 +78,8 @@ outputs are captured once per layout run. Explicit values on `FcoseNode` and
 - area-ordered or caller-sorted zero-degree tiling with randomized sibling
   grouping, ideal-row-width organization, and bottom-up nested-compound
   clearing/repopulation;
+- run-scoped lazy horizontal and vertical tiling-padding resolvers across flat
+  and nested tiling;
 - optional uniform-leaf center-distance spring and repulsion calculations;
 - bottom-up compound bounds with padding and label geometry;
 - transformed and displacement-relaxed fixed, alignment, and DAG placement
@@ -102,10 +104,7 @@ outputs are captured once per layout run. Explicit values on `FcoseNode` and
 The largest remaining parity work is:
 
 - broader randomized differential coverage for uncommon topology, overlapping
-  alignment, and fixed-node combinations;
-- optional adapter conveniences for upstream's zero-argument lazy tiling
-  padding callbacks, whose values can already be resolved before constructing
-  `FcoseOptions`.
+  alignment, and fixed-node combinations.
 
 Browser presentation concerns such as animation, viewport fitting, event
 emission, and Cytoscape collection adaptation are intentionally outside this

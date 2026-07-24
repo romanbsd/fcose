@@ -241,7 +241,7 @@ final class CompoundGraphManager {
       for (final child in children.skip(1)) {
         bounds = bounds.union(result[child.id]!);
       }
-      final padded = bounds.inflate(padding);
+      final padded = bounds.inflate(node.padding ?? padding);
       var left = padded.left;
       var top = padded.top;
       var width = padded.width;

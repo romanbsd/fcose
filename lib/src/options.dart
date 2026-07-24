@@ -98,6 +98,8 @@ final class FcoseOptions {
   final double compoundGravity;
   final double compoundGravityRange;
   final double nestingFactor;
+
+  /// Fallback padding for compound nodes without [FcoseNode.padding].
   final double compoundPadding;
 
   /// Uses center-to-center spring and repulsion distances for leaf pairs.

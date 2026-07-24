@@ -40,6 +40,10 @@ void main() {
       );
     });
 
+    test('rejects negative node padding', () {
+      expect(() => FcoseGraph(nodes: const [FcoseNode(id: 'a', padding: -1)]), throwsArgumentError);
+    });
+
     test('keeps derived graph indexes deeply immutable', () {
       final graph = FcoseGraph(
         nodes: const [
@@ -171,6 +175,25 @@ void main() {
 
       final parent = rectangles['parent']!;
       expect([parent.left, parent.top, parent.width, parent.height], [-50, -30, 70, 50]);
+    });
+
+    test('uses per-compound padding with a fallback at each nesting level', () {
+      final manager = CompoundGraphManager(
+        FcoseGraph(
+          nodes: const [
+            FcoseNode(id: 'outer', padding: 30),
+            FcoseNode(id: 'inner', parentId: 'outer', padding: 5),
+            FcoseNode(id: 'child', parentId: 'inner', width: 20, height: 20),
+          ],
+        ),
+      );
+
+      final rectangles = manager.rectangles({'child': Offset.zero}, padding: 10);
+
+      final inner = rectangles['inner']!;
+      final outer = rectangles['outer']!;
+      expect([inner.left, inner.top, inner.width, inner.height], [-15, -15, 30, 30]);
+      expect([outer.left, outer.top, outer.width, outer.height], [-45, -45, 90, 90]);
     });
 
     test('expands centered compound labels symmetrically only when necessary', () {
@@ -1340,6 +1363,75 @@ void main() {
       expect(result.rectOf('inner').containsRect(result.rectOf('b')), isTrue);
       expect(result.rectOf('outer').containsRect(result.rectOf('inner')), isTrue);
       expect(result.rectOf('outer').containsRect(result.rectOf('c')), isTrue);
+    });
+
+    test('uses each compound node padding while tiling nested children', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 10,
+              tile: true,
+              compoundPadding: 10,
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'outer', padding: 25),
+                FcoseNode(id: 'inner', parentId: 'outer', padding: 40),
+                FcoseNode(id: 'a', parentId: 'inner', width: 20, height: 20, position: Offset(20, 20)),
+                FcoseNode(id: 'b', parentId: 'inner', width: 20, height: 20, position: Offset(80, 20)),
+                FcoseNode(id: 'c', parentId: 'outer', width: 20, height: 20, position: Offset(50, 100)),
+                FcoseNode(id: 'x', position: Offset(300, 50)),
+                FcoseNode(id: 'y', position: Offset(420, 50)),
+              ],
+              edges: const [FcoseEdge(id: 'xy', source: 'x', target: 'y')],
+            ),
+          );
+
+      expect(result.rectOf('inner').width, 130);
+      expect(result.rectOf('inner').height, 100);
+      expect(result.rectOf('outer').width, 180);
+      expect(result.rectOf('outer').height, 180);
+      expect(result.rectOf('inner').containsRect(result.rectOf('a')), isTrue);
+      expect(result.rectOf('inner').containsRect(result.rectOf('b')), isTrue);
+      expect(result.rectOf('outer').containsRect(result.rectOf('inner')), isTrue);
+      expect(result.rectOf('outer').containsRect(result.rectOf('c')), isTrue);
+    });
+
+    test('uses owner padding for zero-degree groups inside a live compound', () {
+      FcoseGraph graph({double? parentPadding}) => FcoseGraph(
+        nodes: [
+          FcoseNode(id: 'parent', padding: parentPadding),
+          const FcoseNode(id: 'a', parentId: 'parent', position: Offset(0, 0)),
+          const FcoseNode(id: 'b', parentId: 'parent', position: Offset(100, 0)),
+          const FcoseNode(id: 'c', parentId: 'parent', position: Offset(0, 100)),
+          const FcoseNode(id: 'd', parentId: 'parent', position: Offset(100, 100)),
+        ],
+        edges: const [FcoseEdge(id: 'ab', source: 'a', target: 'b')],
+      );
+
+      FcoseResult run(FcoseGraph graph, double fallbackPadding) => FcoseLayout(
+        options: FcoseOptions(
+          quality: LayoutQuality.proof,
+          randomize: false,
+          maxIterations: 10,
+          tile: true,
+          compoundPadding: fallbackPadding,
+        ),
+      ).run(graph);
+
+      final perNode = run(graph(parentPadding: 35), 10);
+      final fallback = run(graph(), 35);
+
+      expect(perNode.positions, fallback.positions);
+      final actualParent = perNode.rectOf('parent');
+      final expectedParent = fallback.rectOf('parent');
+      expect(
+        [actualParent.left, actualParent.top, actualParent.width, actualParent.height],
+        [expectedParent.left, expectedParent.top, expectedParent.width, expectedParent.height],
+      );
     });
 
     test('computes compound bounds around descendants', () {

@@ -29,3 +29,5 @@
   gaps and cover mixed-size flat and nested compound differentials.
 - Add typed zero-argument tiling-padding resolvers with run-scoped upstream
   semantics across flat and nested tiling.
+- Add per-node compound padding across bounds, nested tiling, force geometry,
+  and component packing while retaining the layout-wide fallback.

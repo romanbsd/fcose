@@ -160,6 +160,7 @@ final class FcoseLayout {
             labelHorizontalPosition: node.labelHorizontalPosition,
             labelVerticalPosition: node.labelVerticalPosition,
             nodeRepulsion: node.nodeRepulsion ?? options.nodeRepulsionFor?.call(node) ?? options.nodeRepulsion,
+            padding: node.padding,
           ),
       ],
       edges: resolvedEdges,
@@ -888,11 +889,12 @@ final class FcoseLayout {
     for (final compoundId in compoundOrder) {
       final original = graph.nodeById[compoundId]!;
       final members = [for (final child in graph.childrenByParent[compoundId]!) nodesById[child.id]!];
+      final compoundPadding = original.padding ?? options.compoundPadding;
       final organization = _tileNodes(
         members,
         positions,
-        horizontalInset: options.compoundPadding,
-        verticalInset: options.compoundPadding,
+        horizontalInset: compoundPadding,
+        verticalInset: compoundPadding,
         tilingPadding: tilingPadding,
       );
       final proxy = _tileProxy(original, organization);
@@ -932,7 +934,10 @@ final class FcoseLayout {
       while (graph.nodeById.containsKey(dummyId) || dummyNodes.any((node) => node.id == dummyId)) {
         dummyId = 'DummyCompound_${entry.key ?? 'undefined'}_${collisionIndex++}';
       }
-      final inset = entry.key == null ? 0.0 : options.compoundPadding;
+      final inset = switch (entry.key) {
+        null => 0.0,
+        final ownerId => graph.nodeById[ownerId]!.padding ?? options.compoundPadding,
+      };
       final organization = _tileNodes(
         entry.value,
         positions,
@@ -1050,6 +1055,7 @@ final class FcoseLayout {
         labelHorizontalPosition: original.labelHorizontalPosition,
         labelVerticalPosition: original.labelVerticalPosition,
         nodeRepulsion: original.nodeRepulsion,
+        padding: original.padding,
       ),
       contentOffset: contentOffset,
     );

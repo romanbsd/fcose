@@ -81,7 +81,8 @@ outputs are captured once per layout run. Explicit values on `FcoseNode` and
 - run-scoped lazy horizontal and vertical tiling-padding resolvers across flat
   and nested tiling;
 - optional uniform-leaf center-distance spring and repulsion calculations;
-- bottom-up compound bounds with padding and label geometry;
+- bottom-up compound bounds with per-node Cytoscape-style padding, a typed
+  layout fallback, and label geometry;
 - transformed and displacement-relaxed fixed, alignment, and DAG placement
   constraints;
 - cose-base-compatible cross-axis alignment dummy handling, including fixed

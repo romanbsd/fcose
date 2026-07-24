@@ -17,6 +17,7 @@ final class FcoseNode {
     this.labelHorizontalPosition = FcoseLabelHorizontalPosition.center,
     this.labelVerticalPosition = FcoseLabelVerticalPosition.center,
     this.nodeRepulsion,
+    this.padding,
   });
 
   final String id;
@@ -38,6 +39,12 @@ final class FcoseNode {
   /// Per-node fCoSE repulsion strength. When absent, the layout-wide option is
   /// used, matching cytoscape-fCoSE's `nodeRepulsion(node)` callback.
   final double? nodeRepulsion;
+
+  /// Uniform compound padding read from the corresponding Cytoscape node.
+  ///
+  /// When absent, [FcoseOptions.compoundPadding] supplies the layout fallback.
+  /// Padding is ignored for nodes without children.
+  final double? padding;
 }
 
 /// An undirected graph edge.
@@ -88,6 +95,9 @@ final class FcoseGraph {
       }
       if (node.labelWidth < 0 || node.labelHeight < 0) {
         throw ArgumentError.value(node.id, 'nodes', 'label dimensions must not be negative');
+      }
+      if (node.padding case final padding? when padding < 0) {
+        throw ArgumentError.value(node.id, 'nodes', 'node padding must not be negative');
       }
     }
     for (final node in nodes) {

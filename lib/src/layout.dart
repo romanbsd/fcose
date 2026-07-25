@@ -397,6 +397,11 @@ final class FcoseLayout {
     final averageIdealLength = _averageIdealEdgeLength(graph.edges);
     final totalDisplacementThreshold = 0.03 * averageIdealLength * graph.graph.nodes.length;
     final repulsionRange = 2 * math.max(averageIdealLength, _minimumRepulsionRangeIdealEdgeLength).toDouble();
+    final minimumComponentDistance = averageIdealLength / 10;
+    final separationBuffer = averageIdealLength / 2;
+    // Reused by every repulsion and spring pair so the inner loops allocate
+    // nothing; each pair overwrites all four slots before reading them.
+    final intersection = Float64List(4);
 
     for (var iteration = 0; iteration < maxIterations; iteration++) {
       final iterationNumber = iteration + 1;
@@ -469,7 +474,7 @@ final class FcoseLayout {
         final secondWeight = descendantCounts[second];
         if (firstRect.overlaps(secondRect)) {
           final childFactor = firstWeight * secondWeight / (firstWeight + secondWeight);
-          final separation = firstRect.separationAmountTo(secondRect, buffer: averageIdealLength / 2);
+          final separation = firstRect.separationAmountTo(secondRect, buffer: separationBuffer);
           final scale = -2 * childFactor;
           forceX[first] += separation.x * scale;
           forceY[first] += separation.y * scale;
@@ -477,20 +482,24 @@ final class FcoseLayout {
           forceY[second] -= separation.y * scale;
           continue;
         }
-        var delta = options.uniformNodeDimensions && !isCompound[first] && !isCompound[second]
-            ? secondRect.center - firstRect.center
-            : firstRect.boundaryDisplacementTo(secondRect);
-        final minimumComponentDistance = averageIdealLength / 10;
-        delta = Offset(
-          delta.x.abs() < minimumComponentDistance ? delta.x.sign * minimumComponentDistance : delta.x,
-          delta.y.abs() < minimumComponentDistance ? delta.y.sign * minimumComponentDistance : delta.y,
-        );
-        final boundaryDistance = delta.length;
+        double deltaX;
+        double deltaY;
+        if (options.uniformNodeDimensions && !isCompound[first] && !isCompound[second]) {
+          deltaX = (secondRect.x + secondRect.width / 2) - (firstRect.x + firstRect.width / 2);
+          deltaY = (secondRect.y + secondRect.height / 2) - (firstRect.y + firstRect.height / 2);
+        } else {
+          writeBoundaryIntersection(firstRect, secondRect, intersection);
+          deltaX = intersection[2] - intersection[0];
+          deltaY = intersection[3] - intersection[1];
+        }
+        if (deltaX.abs() < minimumComponentDistance) deltaX = deltaX.sign * minimumComponentDistance;
+        if (deltaY.abs() < minimumComponentDistance) deltaY = deltaY.sign * minimumComponentDistance;
+        final boundaryDistance = math.sqrt(deltaX * deltaX + deltaY * deltaY);
         if (boundaryDistance == 0) continue;
         final pairRepulsion = nodeRepulsions[first] / 2 + nodeRepulsions[second] / 2;
         final magnitude = pairRepulsion * firstWeight * secondWeight / (boundaryDistance * boundaryDistance);
-        final unitX = delta.x / boundaryDistance;
-        final unitY = delta.y / boundaryDistance;
+        final unitX = deltaX / boundaryDistance;
+        final unitY = deltaY / boundaryDistance;
         forceX[first] -= unitX * magnitude;
         forceY[first] -= unitY * magnitude;
         forceX[second] += unitX * magnitude;
@@ -501,18 +510,26 @@ final class FcoseLayout {
       for (final (:source, :target, :idealLength, :elasticity) in springs) {
         final sourceRect = rectangleByIndex[source];
         final targetRect = rectangleByIndex[target];
-        var delta = options.uniformNodeDimensions && !isCompound[source] && !isCompound[target]
-            ? targetRect.center - sourceRect.center
-            : sourceRect.boundaryDisplacementTo(targetRect);
-        if (delta.length < 1e-7) continue;
-        delta = Offset(
-          delta.x.abs() < _minimumSpringComponentLength ? delta.x.sign : delta.x,
-          delta.y.abs() < _minimumSpringComponentLength ? delta.y.sign : delta.y,
-        );
-        final length = delta.length;
+        double deltaX;
+        double deltaY;
+        if (options.uniformNodeDimensions && !isCompound[source] && !isCompound[target]) {
+          deltaX = (targetRect.x + targetRect.width / 2) - (sourceRect.x + sourceRect.width / 2);
+          deltaY = (targetRect.y + targetRect.height / 2) - (sourceRect.y + sourceRect.height / 2);
+        } else {
+          // Overlapping endpoints have no boundary displacement, which the
+          // length check below would reject anyway.
+          if (sourceRect.overlaps(targetRect)) continue;
+          writeBoundaryIntersection(sourceRect, targetRect, intersection);
+          deltaX = intersection[2] - intersection[0];
+          deltaY = intersection[3] - intersection[1];
+        }
+        if (math.sqrt(deltaX * deltaX + deltaY * deltaY) < 1e-7) continue;
+        if (deltaX.abs() < _minimumSpringComponentLength) deltaX = deltaX.sign;
+        if (deltaY.abs() < _minimumSpringComponentLength) deltaY = deltaY.sign;
+        final length = math.sqrt(deltaX * deltaX + deltaY * deltaY);
         final magnitude = elasticity * (length - idealLength);
-        final forceComponentX = delta.x / length * magnitude;
-        final forceComponentY = delta.y / length * magnitude;
+        final forceComponentX = deltaX / length * magnitude;
+        final forceComponentY = deltaY / length * magnitude;
         forceX[source] += forceComponentX;
         forceY[source] += forceComponentY;
         forceX[target] -= forceComponentX;

@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 /// A framework-independent two-dimensional vector or point.
 final class Offset {
@@ -62,8 +63,9 @@ final class Rect {
   /// primitive used by layout-base and CoSE.
   Offset boundaryDisplacementTo(Rect other) {
     if (overlaps(other)) return Offset.zero;
-    final points = _intersectionPoints(this, other);
-    return points.target - points.source;
+    final points = Float64List(4);
+    writeBoundaryIntersection(this, other, points);
+    return Offset(points[2] - points[0], points[3] - points[1]);
   }
 
   double boundaryDistanceTo(Rect other) => boundaryDisplacementTo(other).length;
@@ -121,56 +123,71 @@ final class Rect {
   String toString() => 'Rect($x, $y, $width, $height)';
 }
 
-({Offset source, Offset target}) _intersectionPoints(Rect source, Rect target) {
-  final sourceCenter = source.center;
-  final targetCenter = target.center;
-  if (sourceCenter.x == targetCenter.x) {
-    return sourceCenter.y > targetCenter.y
-        ? (source: Offset(sourceCenter.x, source.top), target: Offset(targetCenter.x, target.bottom))
-        : (source: Offset(sourceCenter.x, source.bottom), target: Offset(targetCenter.x, target.top));
+/// Writes the points where the line joining the centers of [source] and
+/// [target] leaves [source] and enters [target] into [out], as
+/// `[sourceX, sourceY, targetX, targetY]`.
+///
+/// The caller must have established that the rectangles do not overlap. Writing
+/// into a caller-owned buffer keeps the spring embedder's inner loops free of
+/// per-pair allocation.
+void writeBoundaryIntersection(Rect source, Rect target, Float64List out) {
+  final sourceCenterX = source.x + source.width / 2;
+  final sourceCenterY = source.y + source.height / 2;
+  final targetCenterX = target.x + target.width / 2;
+  final targetCenterY = target.y + target.height / 2;
+  if (sourceCenterX == targetCenterX) {
+    final sourceAbove = sourceCenterY > targetCenterY;
+    out[0] = sourceCenterX;
+    out[1] = sourceAbove ? source.top : source.bottom;
+    out[2] = targetCenterX;
+    out[3] = sourceAbove ? target.bottom : target.top;
+    return;
   }
-  if (sourceCenter.y == targetCenter.y) {
-    return sourceCenter.x > targetCenter.x
-        ? (source: Offset(source.left, sourceCenter.y), target: Offset(target.right, targetCenter.y))
-        : (source: Offset(source.right, sourceCenter.y), target: Offset(target.left, targetCenter.y));
+  if (sourceCenterY == targetCenterY) {
+    final sourceRightOf = sourceCenterX > targetCenterX;
+    out[0] = sourceRightOf ? source.left : source.right;
+    out[1] = sourceCenterY;
+    out[2] = sourceRightOf ? target.right : target.left;
+    out[3] = targetCenterY;
+    return;
   }
 
   final sourceDiagonalSlope = source.height / source.width;
   final targetDiagonalSlope = target.height / target.width;
-  final centerSlope = (targetCenter.y - sourceCenter.y) / (targetCenter.x - sourceCenter.x);
-  Offset? sourceClip;
-  Offset? targetClip;
+  final centerSlope = (targetCenterY - sourceCenterY) / (targetCenterX - sourceCenterX);
+  var sourceClipped = false;
+  var targetClipped = false;
 
   if (-sourceDiagonalSlope == centerSlope) {
-    sourceClip = sourceCenter.x > targetCenter.x
-        ? Offset(source.left, source.bottom)
-        : Offset(source.right, source.top);
+    sourceClipped = true;
+    out[0] = sourceCenterX > targetCenterX ? source.left : source.right;
+    out[1] = sourceCenterX > targetCenterX ? source.bottom : source.top;
   } else if (sourceDiagonalSlope == centerSlope) {
-    sourceClip = sourceCenter.x > targetCenter.x
-        ? Offset(source.left, source.top)
-        : Offset(source.right, source.bottom);
+    sourceClipped = true;
+    out[0] = sourceCenterX > targetCenterX ? source.left : source.right;
+    out[1] = sourceCenterX > targetCenterX ? source.top : source.bottom;
   }
   if (-targetDiagonalSlope == centerSlope) {
-    targetClip = targetCenter.x > sourceCenter.x
-        ? Offset(target.left, target.bottom)
-        : Offset(target.right, target.top);
+    targetClipped = true;
+    out[2] = targetCenterX > sourceCenterX ? target.left : target.right;
+    out[3] = targetCenterX > sourceCenterX ? target.bottom : target.top;
   } else if (targetDiagonalSlope == centerSlope) {
-    targetClip = targetCenter.x > sourceCenter.x
-        ? Offset(target.left, target.top)
-        : Offset(target.right, target.bottom);
+    targetClipped = true;
+    out[2] = targetCenterX > sourceCenterX ? target.left : target.right;
+    out[3] = targetCenterX > sourceCenterX ? target.top : target.bottom;
   }
 
   late final int sourceDirection;
   late final int targetDirection;
-  if (sourceCenter.x > targetCenter.x) {
-    if (sourceCenter.y > targetCenter.y) {
+  if (sourceCenterX > targetCenterX) {
+    if (sourceCenterY > targetCenterY) {
       sourceDirection = _cardinalDirection(sourceDiagonalSlope, centerSlope, 4);
       targetDirection = _cardinalDirection(targetDiagonalSlope, centerSlope, 2);
     } else {
       sourceDirection = _cardinalDirection(-sourceDiagonalSlope, centerSlope, 3);
       targetDirection = _cardinalDirection(-targetDiagonalSlope, centerSlope, 1);
     }
-  } else if (sourceCenter.y > targetCenter.y) {
+  } else if (sourceCenterY > targetCenterY) {
     sourceDirection = _cardinalDirection(-sourceDiagonalSlope, centerSlope, 1);
     targetDirection = _cardinalDirection(-targetDiagonalSlope, centerSlope, 3);
   } else {
@@ -178,23 +195,42 @@ final class Rect {
     targetDirection = _cardinalDirection(targetDiagonalSlope, centerSlope, 4);
   }
 
-  return (
-    source: sourceClip ?? _clipPoint(source, sourceCenter, centerSlope, sourceDirection),
-    target: targetClip ?? _clipPoint(target, targetCenter, centerSlope, targetDirection),
-  );
+  if (!sourceClipped) {
+    _writeClipPoint(source, sourceCenterX, sourceCenterY, centerSlope, sourceDirection, out, 0);
+  }
+  if (!targetClipped) {
+    _writeClipPoint(target, targetCenterX, targetCenterY, centerSlope, targetDirection, out, 2);
+  }
 }
 
 int _cardinalDirection(double diagonalSlope, double centerSlope, int line) =>
     diagonalSlope > centerSlope ? line : 1 + line % 4;
 
-Offset _clipPoint(Rect rectangle, Offset center, double centerSlope, int direction) {
+void _writeClipPoint(
+  Rect rectangle,
+  double centerX,
+  double centerY,
+  double centerSlope,
+  int direction,
+  Float64List out,
+  int offset,
+) {
   final halfWidth = rectangle.width / 2;
   final halfHeight = rectangle.height / 2;
-  return switch (direction) {
-    1 => Offset(center.x + (-halfHeight) / centerSlope, rectangle.top),
-    2 => Offset(rectangle.right, center.y + halfWidth * centerSlope),
-    3 => Offset(center.x + halfHeight / centerSlope, rectangle.bottom),
-    4 => Offset(rectangle.left, center.y + (-halfWidth) * centerSlope),
-    _ => throw ArgumentError.value(direction, 'direction', 'must be a cardinal direction'),
-  };
+  switch (direction) {
+    case 1:
+      out[offset] = centerX + (-halfHeight) / centerSlope;
+      out[offset + 1] = rectangle.top;
+    case 2:
+      out[offset] = rectangle.right;
+      out[offset + 1] = centerY + halfWidth * centerSlope;
+    case 3:
+      out[offset] = centerX + halfHeight / centerSlope;
+      out[offset + 1] = rectangle.bottom;
+    case 4:
+      out[offset] = rectangle.left;
+      out[offset + 1] = centerY + (-halfWidth) * centerSlope;
+    default:
+      throw ArgumentError.value(direction, 'direction', 'must be a cardinal direction');
+  }
 }

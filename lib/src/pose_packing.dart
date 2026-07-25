@@ -20,6 +20,7 @@ final class IncrementalComponentPacker {
     final currentCenter = _layoutUtilitiesCenter(components);
     final polygons = [for (final component in components) _PosePolygon.fromComponent(component)];
     var edges = _constructEdges(polygons);
+    var repulsionEdges = _ascendingNeighbors(edges);
     final forces = List.filled(polygons.length, Offset.zero);
     final intersectionForces = List.filled(polygons.length, Offset.zero);
 
@@ -32,9 +33,8 @@ final class IncrementalComponentPacker {
 
       // POSE 1.1.1 applies this force to connected pairs despite the upstream
       // comment describing non-connected pairs. Preserve the shipped behavior.
-      for (var first = 0; first < polygons.length; first++) {
-        for (var second = first + 1; second < polygons.length; second++) {
-          if (!edges[first].contains(second)) continue;
+      for (var first = 0; first < repulsionEdges.length; first++) {
+        for (final second in repulsionEdges[first]) {
           _accumulateForce(polygons, first, second, forces, intersectionForces, _repulsiveForce);
         }
       }
@@ -48,6 +48,7 @@ final class IncrementalComponentPacker {
 
       if (iteration % _edgeRefreshPeriod == 0) {
         edges = _constructEdges(polygons);
+        repulsionEdges = _ascendingNeighbors(edges);
       }
     }
 
@@ -141,6 +142,18 @@ List<List<int>> _constructEdges(List<_PosePolygon> polygons) {
   return edges;
 }
 
+/// [edges] with every adjacency list in ascending order.
+///
+/// POSE's repulsive pass walks all index pairs and skips the unconnected ones,
+/// so it reaches each connected pair with the neighbor index ascending. Every
+/// adjacency list only holds neighbors above its own index, which makes that
+/// scan equivalent to walking these lists — but the collinear branch of
+/// [_constructEdges] can emit one out of order, and force accumulation is
+/// order-sensitive.
+List<List<int>> _ascendingNeighbors(List<List<int>> edges) => [
+  for (final neighbors in edges) List<int>.of(neighbors)..sort(),
+];
+
 void _connect(List<Set<int>> neighbors, int first, int second) {
   if (first == second) return;
   neighbors[first].add(second);
@@ -222,9 +235,10 @@ bool _circumcircleContains(({int first, int second, int third}) triangle, int po
 }
 
 ({double squaredDistance, Offset unitVector}) _convexPolygonDistance(_PosePolygon first, _PosePolygon second) {
+  final negatedSecond = [for (final point in second.points) point * -1];
   final minkowskiPoints = <Offset>[
     for (final firstPoint in first.points)
-      for (final secondPoint in second.negative().points) firstPoint + secondPoint,
+      for (final secondPoint in negatedSecond) firstPoint + secondPoint,
   ];
   final difference = _PosePolygon.fromPoints(minkowskiPoints);
   late ({double squaredDistance, Offset unitVector}) closest;
@@ -254,8 +268,9 @@ Offset _shortestPointOnSegment(Offset start, Offset end) {
 }
 
 bool _intersects(_PosePolygon first, _PosePolygon second) {
-  for (final polygon in [first, second]) {
-    final points = polygon.points;
+  final firstPoints = first.points;
+  final secondPoints = second.points;
+  for (final points in [firstPoints, secondPoints]) {
     for (final (index, point) in points.indexed) {
       final edge = points[(index + 1) % points.length] - point;
       final axis = Offset(-edge.y, edge.x);
@@ -263,12 +278,12 @@ bool _intersects(_PosePolygon first, _PosePolygon second) {
       var firstMaximum = double.negativeInfinity;
       var secondMinimum = double.infinity;
       var secondMaximum = double.negativeInfinity;
-      for (final candidate in first.points) {
+      for (final candidate in firstPoints) {
         final projection = candidate.x * axis.x + candidate.y * axis.y;
         firstMinimum = math.min(firstMinimum, projection);
         firstMaximum = math.max(firstMaximum, projection);
       }
-      for (final candidate in second.points) {
+      for (final candidate in secondPoints) {
         final projection = candidate.x * axis.x + candidate.y * axis.y;
         secondMinimum = math.min(secondMinimum, projection);
         secondMaximum = math.max(secondMaximum, projection);
@@ -301,14 +316,17 @@ final class _PosePolygon {
       }
     }
     remaining.remove(topLeft);
-    remaining.sort((first, second) => _slopeAngle(topLeft, first).compareTo(_slopeAngle(topLeft, second)));
+    // Each angle is measured once; the comparator and the collinear scan below
+    // would otherwise recompute the same `atan2` a logarithmic number of times.
+    final byAngle = [for (final point in remaining) (angle: _slopeAngle(topLeft, point), point: point)]
+      ..sort((first, second) => first.angle.compareTo(second.angle));
 
     final unique = <Offset>[];
-    for (var index = 0; index < remaining.length;) {
-      var point = remaining[index];
+    for (var index = 0; index < byAngle.length;) {
+      var point = byAngle[index].point;
       var next = index + 1;
-      while (next < remaining.length && _slopeAngle(topLeft, point) == _slopeAngle(topLeft, remaining[next])) {
-        if ((remaining[next] - topLeft).length > (point - topLeft).length) point = remaining[next];
+      while (next < byAngle.length && byAngle[index].angle == byAngle[next].angle) {
+        if ((byAngle[next].point - topLeft).length > (point - topLeft).length) point = byAngle[next].point;
         next++;
       }
       unique.add(point);
@@ -328,13 +346,18 @@ final class _PosePolygon {
   final List<Offset> _points;
   final Offset centerOffset;
   Offset base = Offset.zero;
+  List<Offset>? _translated;
 
-  List<Offset> get points => base == Offset.zero ? _points : [for (final point in _points) point + base];
+  /// The hull in absolute coordinates. Every force pass reads this many times
+  /// per polygon between moves, so the translated copy is cached.
+  List<Offset> get points =>
+      base == Offset.zero ? _points : _translated ??= [for (final point in _points) point + base];
   Offset get center => centerOffset + base;
 
-  void move(Offset displacement) => base += displacement;
-
-  _PosePolygon negative() => _PosePolygon._([for (final point in points) point * -1]);
+  void move(Offset displacement) {
+    base += displacement;
+    _translated = null;
+  }
 }
 
 double _slopeAngle(Offset from, Offset to) => math.atan2(to.y - from.y, to.x - from.x);

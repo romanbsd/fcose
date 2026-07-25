@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'geometry.dart';
 import 'options.dart';
@@ -247,26 +248,33 @@ final class _PackingGrid {
   /// Largest integer represented exactly by both the Dart VM and JavaScript.
   static const _largestExactJavaScriptInteger = 0x1fffffffffffff;
 
+  /// Cell flags packed into [_flags].
+  static const _occupied = 1;
+  static const _visited = 2;
+
   _PackingGrid(double width, double height, this.step)
-    : cells = List.generate(
-        (width / step).floor() + 1,
-        (_) => List.generate((height / step).floor() + 1, (_) => _PackingCell()),
-      );
+    : width = (width / step).floor() + 1,
+      height = (height / step).floor() + 1,
+      _flags = Uint8List(((width / step).floor() + 1) * ((height / step).floor() + 1));
 
   final int step;
-  final List<List<_PackingCell>> cells;
+  final int width;
+  final int height;
 
-  /// Cells whose [_PackingCell.visited] flag is set, so [place] can reset only
-  /// those instead of sweeping the whole grid as layout-utilities does.
-  final List<_PackingCell> _visitedCells = [];
+  /// Row-major [_occupied]/[_visited] flags. A grid spans twice the combined
+  /// component extent, so one byte per cell keeps a large packing run out of
+  /// the object heap entirely.
+  final Uint8List _flags;
+
+  /// Indices whose [_visited] flag is set, so [place] can reset only those
+  /// instead of sweeping the whole grid as layout-utilities does.
+  final List<int> _visitedCells = [];
   int left = _largestExactJavaScriptInteger;
   int right = -_largestExactJavaScriptInteger;
   int top = _largestExactJavaScriptInteger;
   int bottom = -_largestExactJavaScriptInteger;
   int occupiedCellCount = 0;
 
-  int get width => cells.length;
-  int get height => cells.first.length;
   int get centerX => width ~/ 2;
   int get centerY => height ~/ 2;
 
@@ -278,7 +286,7 @@ final class _PackingGrid {
       // quadratic in the total component area.
       for (var x = math.max(0, left); x <= math.min(width - 1, right); x++) {
         for (var y = math.max(0, top); y <= math.min(height - 1, bottom); y++) {
-          if (cells[x][y].occupied) result.addAll(_cellNeighbors(x, y));
+          if ((_flags[x * height + y] & _occupied) != 0) result.addAll(_cellNeighbors(x, y));
         }
       }
       var start = 0;
@@ -318,10 +326,10 @@ final class _PackingGrid {
       final nextX = x + direction.x;
       final nextY = y + direction.y;
       if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) continue;
-      final cell = cells[nextX][nextY];
-      if (cell.occupied || cell.visited) continue;
-      cell.visited = true;
-      _visitedCells.add(cell);
+      final index = nextX * height + nextY;
+      if (_flags[index] != 0) continue;
+      _flags[index] = _visited;
+      _visitedCells.add(index);
       result.add((x: nextX, y: nextY));
     }
     return result;
@@ -333,7 +341,7 @@ final class _PackingGrid {
         final gridX = localX - polyomino.centerX + x;
         final gridY = localY - polyomino.centerY + y;
         if (gridX < 0 || gridX >= width || gridY < 0 || gridY >= height) return false;
-        if (polyomino.cells[localX][localY] && cells[gridX][gridY].occupied) return false;
+        if (polyomino.cells[localX][localY] && (_flags[gridX * height + gridY] & _occupied) != 0) return false;
       }
     }
     return true;
@@ -346,7 +354,7 @@ final class _PackingGrid {
     for (var localX = 0; localX < polyomino.stepWidth; localX++) {
       for (var localY = 0; localY < polyomino.stepHeight; localY++) {
         if (polyomino.cells[localX][localY]) {
-          cells[localX - polyomino.centerX + x][localY - polyomino.centerY + y].occupied = true;
+          _flags[(localX - polyomino.centerX + x) * height + (localY - polyomino.centerY + y)] = _occupied;
         }
       }
     }
@@ -355,8 +363,9 @@ final class _PackingGrid {
     right = math.max(right, x - polyomino.centerX + polyomino.stepWidth - 1);
     top = math.min(top, y - polyomino.centerY);
     bottom = math.max(bottom, y - polyomino.centerY + polyomino.stepHeight - 1);
-    for (final cell in _visitedCells) {
-      cell.visited = false;
+    for (final index in _visitedCells) {
+      // A cell marked occupied above must keep that flag.
+      if (_flags[index] == _visited) _flags[index] = 0;
     }
     _visitedCells.clear();
   }
@@ -381,9 +390,4 @@ final class _PackingGrid {
         : occupied / ((occupiedHeight * desiredAspectRatio) * occupiedHeight);
     return (aspectRatio: aspectRatio, fullness: fullness, adjustedFullness: adjustedFullness);
   }
-}
-
-final class _PackingCell {
-  bool occupied = false;
-  bool visited = false;
 }

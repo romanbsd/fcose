@@ -2023,14 +2023,17 @@ void main() {
       expect(result.rectOf('b').overlaps(result.rectOf('d')), isFalse);
       expect(result.rectOf('parent').containsRect(result.rectOf('a')), isTrue);
       expect(result.rectOf('parent').containsRect(result.rectOf('d')), isTrue);
-      expect(result.positionOf('a').x, closeTo(74.99949050629539, 1e-3));
-      expect(result.positionOf('a').y, closeTo(-5.492686047356991, 1e-3));
-      expect(result.positionOf('b').x, closeTo(149.99898099979958, 1e-3));
-      expect(result.positionOf('b').y, closeTo(5.492685785374174, 1e-3));
-      expect(result.positionOf('c').x, closeTo(-74.99949049989979, 1e-3));
-      expect(result.positionOf('c').y, closeTo(-5.492685916365584, 1e-3));
-      expect(result.positionOf('d').x, closeTo(-149.99898101259078, 1e-3));
-      expect(result.positionOf('d').y, closeTo(5.492686047356986, 1e-3));
+      // Upstream values from tool/oracle/specs/draft-compound.json, which draws
+      // the same random stream as this seed; power iteration converges slightly
+      // differently in the two languages, hence the millionth of a pixel.
+      expect(result.positionOf('a').x, closeTo(74.99949047260667, 1e-6));
+      expect(result.positionOf('a').y, closeTo(-5.492685845029593, 1e-6));
+      expect(result.positionOf('b').x, closeTo(149.99898100619504, 1e-6));
+      expect(result.positionOf('b').y, closeTo(5.492686261365482, 1e-6));
+      expect(result.positionOf('c').x, closeTo(-74.9994905335884, 1e-6));
+      expect(result.positionOf('c').y, closeTo(-5.492686261365481, 1e-6));
+      expect(result.positionOf('d').x, closeTo(-149.99898100619504, 1e-6));
+      expect(result.positionOf('d').y, closeTo(5.492685428693705, 1e-6));
     });
 
     test('uses one root spectral graph for disconnected top-level components', () {
@@ -2049,6 +2052,10 @@ void main() {
         ),
       );
 
+      // Port values. Upstream cannot produce any for this graph: its default
+      // ideal edge length is a function, and the two-node shortcut of
+      // spectral.js adds that option to a coordinate without calling it. See
+      // tool/oracle/specs/draft-disconnected.json.
       final firstEdge = result.positionOf('b') - result.positionOf('a');
       final secondEdge = result.positionOf('d') - result.positionOf('c');
       expect(firstEdge.x, closeTo(74.99949049350419, 1e-3));
@@ -2071,6 +2078,9 @@ void main() {
         ),
       );
 
+      // Port values. Against tool/oracle/specs/draft-nested-compound.json the
+      // layout still comes out mirrored on x, and the edgeless child sits five
+      // pixels off the center upstream gives it.
       expect(result.positionOf('busy').x, closeTo(144.99898100619518, 1e-3));
       expect(result.positionOf('busy').y.abs(), closeTo(7.323581183794171, 1e-3));
       expect(result.positionOf('quiet').x, closeTo(-4.99999999202292, 1e-3));

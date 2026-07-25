@@ -1,0 +1,3 @@
+{"nodes":[{"id":"a","w":80,"h":80,"x":0,"y":0},{"id":"b","w":80,"h":80,"x":200,"y":0},{"id":"c","w":80,"h":80,"x":100,"y":180},{"id":"d","w":80,"h":80,"x":1000,"y":0},{"id":"e","w":80,"h":80,"x":2000,"y":0}],
+ "edges":[{"id":"ab","source":"a","target":"b"},{"id":"bc","source":"b","target":"c"},{"id":"ca","source":"c","target":"a"},{"id":"bd","source":"b","target":"d"},{"id":"de","source":"d","target":"e"}],
+ "options":{"quality":"proof","randomize":false,"numIter":20,"tile":false,"idealEdgeLength":120,"edgeElasticity":0.45,"nodeRepulsion":4500,"gravity":0.25,"gravityRange":3.8,"initialEnergyOnIncremental":0.3}}

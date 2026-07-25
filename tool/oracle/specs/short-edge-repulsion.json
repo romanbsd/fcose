@@ -1,0 +1,4 @@
+{"finalTemperature":0.01,
+ "nodes":[{"id":"a","w":2,"h":2,"x":0,"y":0},{"id":"b","w":2,"h":2,"x":10,"y":0},{"id":"c","w":2,"h":2,"x":6,"y":10}],
+ "edges":[{"id":"ab","source":"a","target":"b"},{"id":"bc","source":"b","target":"c"},{"id":"ca","source":"c","target":"a"}],
+ "options":{"quality":"proof","randomize":false,"numIter":15,"idealEdgeLength":1,"edgeElasticity":0.45,"nodeRepulsion":50,"gravity":0,"initialEnergyOnIncremental":0.03,"packComponents":false,"tile":false}}

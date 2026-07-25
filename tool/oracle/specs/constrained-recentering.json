@@ -1,0 +1,2 @@
+{"nodes":[{"id":"a","x":0,"y":0},{"id":"b","x":100,"y":100},{"id":"free","x":100,"y":0}],
+ "options":{"quality":"proof","randomize":false,"numIter":1,"nodeRepulsion":0,"gravity":0,"tile":false,"packComponents":false,"alignmentConstraint":{"vertical":[["a","b"]]}}}

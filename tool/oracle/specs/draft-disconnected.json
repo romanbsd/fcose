@@ -1,0 +1,4 @@
+{"seed":7,
+ "nodes":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"}],
+ "edges":[{"id":"ab","source":"a","target":"b"},{"id":"cd","source":"c","target":"d"}],
+ "options":{"quality":"draft","tile":false}}

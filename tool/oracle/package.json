@@ -1,0 +1,11 @@
+{
+  "name": "fcose-oracle",
+  "private": true,
+  "description": "Runs the upstream cytoscape-fcose layout so the Dart port can be diffed against it.",
+  "comment": "Versions are exact: this port targets these releases, and a newer one would silently change what parity means.",
+  "dependencies": {
+    "cytoscape": "3.34.0",
+    "cytoscape-fcose": "2.2.0",
+    "cytoscape-layout-utilities": "1.1.1"
+  }
+}

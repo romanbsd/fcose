@@ -1,0 +1,4 @@
+{"seed":7,
+ "nodes":[{"id":"outer"},{"id":"left","parent":"outer"},{"id":"busy","parent":"left"},{"id":"quiet","parent":"left"},{"id":"standalone","parent":"outer"}],
+ "edges":[{"id":"loop","source":"busy","target":"busy"}],
+ "options":{"quality":"draft","tile":false}}

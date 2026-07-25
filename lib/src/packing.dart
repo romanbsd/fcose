@@ -115,8 +115,8 @@ final class RandomizedComponentPacker {
     final grid = _PackingGrid(2 * gridWidth + gridStep, 2 * gridHeight + gridStep, gridStep);
     grid.place(polyominos.first, grid.centerX, grid.centerY);
     for (final polyomino in polyominos.skip(1)) {
-      var candidates = <({int x, int y})>[];
-      ({int x, int y})? selected;
+      var candidates = <int>[];
+      int? selected;
       var bestFullness = 0.0;
       var bestAdjustedFullness = 0.0;
       var bestWeightedUtility = 0.0;
@@ -124,8 +124,10 @@ final class RandomizedComponentPacker {
       while (selected == null) {
         candidates = grid.directNeighbors(candidates, (math.max(polyomino.stepWidth, polyomino.stepHeight) / 2).ceil());
         for (final candidate in candidates) {
-          if (!grid.canPlace(polyomino, candidate.x, candidate.y)) continue;
-          final value = grid.utilityOf(polyomino, candidate.x, candidate.y, desiredAspectRatio);
+          final candidateX = grid.cellX(candidate);
+          final candidateY = grid.cellY(candidate);
+          if (!grid.canPlace(polyomino, candidateX, candidateY)) continue;
+          final value = grid.utilityOf(polyomino, candidateX, candidateY, desiredAspectRatio);
           var choose = false;
           switch (utility) {
             case PackingUtility.adjustedFullness:
@@ -153,7 +155,7 @@ final class RandomizedComponentPacker {
           throw StateError('component packing grid has no available placement');
         }
       }
-      grid.place(polyomino, selected.x, selected.y);
+      grid.place(polyomino, grid.cellX(selected), grid.cellY(selected));
     }
 
     polyominos.sort((first, second) => first.index.compareTo(second.index));
@@ -278,35 +280,41 @@ final class _PackingGrid {
   int get centerX => width ~/ 2;
   int get centerY => height ~/ 2;
 
-  List<({int x, int y})> directNeighbors(List<({int x, int y})> candidates, int level) {
-    final result = <({int x, int y})>[];
+  int cellX(int index) => index ~/ height;
+
+  int cellY(int index) => index % height;
+
+  /// Free cells adjacent to [candidates], or to every placed cell when
+  /// [candidates] is empty, as flat row-major indices.
+  List<int> directNeighbors(List<int> candidates, int level) {
+    final result = <int>[];
     if (candidates.isEmpty) {
       // Every occupied cell lies inside the placed bounding box, so scanning it
       // is equivalent to layout-utilities' full-grid sweep and avoids a cost
       // quadratic in the total component area.
       for (var x = math.max(0, left); x <= math.min(width - 1, right); x++) {
         for (var y = math.max(0, top); y <= math.min(height - 1, bottom); y++) {
-          if ((_flags[x * height + y] & _occupied) != 0) result.addAll(_cellNeighbors(x, y));
+          if ((_flags[x * height + y] & _occupied) != 0) _addCellNeighbors(x, y, result);
         }
       }
       var start = 0;
       var end = result.length - 1;
       for (var distance = 2; distance <= level; distance++) {
         for (var index = start; index <= end; index++) {
-          result.addAll(_cellNeighbors(result[index].x, result[index].y));
+          _addCellNeighbors(cellX(result[index]), cellY(result[index]), result);
         }
         start = end + 1;
         end = result.length - 1;
       }
     } else {
       for (final candidate in candidates) {
-        result.addAll(_cellNeighbors(candidate.x, candidate.y));
+        _addCellNeighbors(cellX(candidate), cellY(candidate), result);
       }
     }
     return result;
   }
 
-  List<({int x, int y})> _cellNeighbors(int x, int y) {
+  void _addCellNeighbors(int x, int y, List<int> result) {
     // layout-utilities tests the western neighbor twice (polyomino-packing.js
     // lines 218 and 242). The visited flag makes the repeat a no-op; it is kept
     // so the direction order matches upstream exactly.
@@ -321,7 +329,6 @@ final class _PackingGrid {
       (x: -1, y: 1),
       (x: 1, y: 1),
     ];
-    final result = <({int x, int y})>[];
     for (final direction in directions) {
       final nextX = x + direction.x;
       final nextY = y + direction.y;
@@ -330,9 +337,8 @@ final class _PackingGrid {
       if (_flags[index] != 0) continue;
       _flags[index] = _visited;
       _visitedCells.add(index);
-      result.add((x: nextX, y: nextY));
+      result.add(index);
     }
-    return result;
   }
 
   bool canPlace(_Polyomino polyomino, int x, int y) {

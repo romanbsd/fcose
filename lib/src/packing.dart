@@ -239,8 +239,8 @@ final class _Polyomino {
   int locationY = -1;
   int occupiedCellCount = 0;
 
-  int get stepWidth => (width / gridStep).floor() + 1;
-  int get stepHeight => (height / gridStep).floor() + 1;
+  late final int stepWidth = (width / gridStep).floor() + 1;
+  late final int stepHeight = (height / gridStep).floor() + 1;
 }
 
 final class _PackingGrid {
@@ -255,6 +255,10 @@ final class _PackingGrid {
 
   final int step;
   final List<List<_PackingCell>> cells;
+
+  /// Cells whose [_PackingCell.visited] flag is set, so [place] can reset only
+  /// those instead of sweeping the whole grid as layout-utilities does.
+  final List<_PackingCell> _visitedCells = [];
   int left = _largestExactJavaScriptInteger;
   int right = -_largestExactJavaScriptInteger;
   int top = _largestExactJavaScriptInteger;
@@ -269,8 +273,11 @@ final class _PackingGrid {
   List<({int x, int y})> directNeighbors(List<({int x, int y})> candidates, int level) {
     final result = <({int x, int y})>[];
     if (candidates.isEmpty) {
-      for (var x = 0; x < width; x++) {
-        for (var y = 0; y < height; y++) {
+      // Every occupied cell lies inside the placed bounding box, so scanning it
+      // is equivalent to layout-utilities' full-grid sweep and avoids a cost
+      // quadratic in the total component area.
+      for (var x = math.max(0, left); x <= math.min(width - 1, right); x++) {
+        for (var y = math.max(0, top); y <= math.min(height - 1, bottom); y++) {
           if (cells[x][y].occupied) result.addAll(_cellNeighbors(x, y));
         }
       }
@@ -292,6 +299,9 @@ final class _PackingGrid {
   }
 
   List<({int x, int y})> _cellNeighbors(int x, int y) {
+    // layout-utilities tests the western neighbor twice (polyomino-packing.js
+    // lines 218 and 242). The visited flag makes the repeat a no-op; it is kept
+    // so the direction order matches upstream exactly.
     const directions = [
       (x: -1, y: 0),
       (x: 1, y: 0),
@@ -311,6 +321,7 @@ final class _PackingGrid {
       final cell = cells[nextX][nextY];
       if (cell.occupied || cell.visited) continue;
       cell.visited = true;
+      _visitedCells.add(cell);
       result.add((x: nextX, y: nextY));
     }
     return result;
@@ -344,11 +355,10 @@ final class _PackingGrid {
     right = math.max(right, x - polyomino.centerX + polyomino.stepWidth - 1);
     top = math.min(top, y - polyomino.centerY);
     bottom = math.max(bottom, y - polyomino.centerY + polyomino.stepHeight - 1);
-    for (final column in cells) {
-      for (final cell in column) {
-        cell.visited = false;
-      }
+    for (final cell in _visitedCells) {
+      cell.visited = false;
     }
+    _visitedCells.clear();
   }
 
   ({double aspectRatio, double fullness, double adjustedFullness}) utilityOf(

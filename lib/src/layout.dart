@@ -919,8 +919,9 @@ final class FcoseLayout {
           directDegree[id]! +
           (graph.childrenByParent[id] ?? const []).fold(0, (sum, child) => sum + degreeWithChildren(child.id)),
     );
+    final compounds = CompoundGraphManager(graph);
     final zeroDegreeByOwner = <String?, List<FcoseNode>>{};
-    for (final node in CompoundGraphManager(graph).layoutOrder) {
+    for (final node in compounds.layoutOrder) {
       if (degreeWithChildren(node.id) != 0 || (node.parentId != null && tiledIds.contains(node.parentId))) continue;
       (zeroDegreeByOwner[node.parentId] ??= []).add(nodesById[node.id]!);
     }
@@ -966,14 +967,8 @@ final class FcoseLayout {
         ),
       );
       if (entry.key == null && !options.randomize) {
-        final initialRectangles = CompoundGraphManager(
-          graph,
-        ).rectangles(initialPositions, padding: options.compoundPadding);
-        var initialBounds = initialRectangles[graph.childrenByParent[null]!.first.id]!;
-        for (final root in graph.childrenByParent[null]!.skip(1)) {
-          initialBounds = initialBounds.union(initialRectangles[root.id]!);
-        }
-        originalBoundsCenter = initialBounds.center;
+        final initialRectangles = compounds.rectangles(initialPositions, padding: options.compoundPadding);
+        originalBoundsCenter = compounds.ownerBounds(null, initialRectangles).center;
       }
     }
 
@@ -1196,17 +1191,20 @@ final class FcoseLayout {
   void _packComponents(_WorkingGraph graph, Map<String, Offset> positions) {
     if (!options.packComponents || graph.packingComponents.length < 2 || options.fixedNodes.isNotEmpty) return;
     final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
-    final packingInput = [
-      for (final component in graph.packingComponents)
+    final packingInput = <PackingComponent>[];
+    for (final component in graph.packingComponents) {
+      final memberIds = component.nodes.toSet();
+      packingInput.add(
         PackingComponent(
           nodes: [for (final id in component.nodes) rectangles[id]!],
           edges: [
             for (final edge in graph.edges)
-              if (component.nodes.contains(edge.source) && component.nodes.contains(edge.target))
+              if (memberIds.contains(edge.source) && memberIds.contains(edge.target))
                 (start: rectangles[edge.source]!.center, end: rectangles[edge.target]!.center),
           ],
         ),
-    ];
+      );
+    }
     final shifts = options.randomize
         ? RandomizedComponentPacker(
             componentSpacing: options.componentSeparation,
@@ -1530,8 +1528,6 @@ final class _WorkingGraph {
         adjacency[target]!.add(source);
       }
     }
-    spectralGraph = _buildSpectralGraph();
-    packingComponents = _findPackingComponents();
   }
 
   final FcoseGraph graph;
@@ -1540,8 +1536,12 @@ final class _WorkingGraph {
   final List<FcoseNode> leaves;
   late final List<FcoseEdge> edges;
   late final Map<String, Set<String>> adjacency;
-  late final _SpectralGraph spectralGraph;
-  late final List<({List<String> roots, List<String> nodes, List<String> leaves})> packingComponents;
+
+  /// Both are computed on demand: the tree-growth loop rebuilds a working graph
+  /// per pruning round and needs neither.
+  late final _SpectralGraph spectralGraph = _buildSpectralGraph();
+  late final List<({List<String> roots, List<String> nodes, List<String> leaves})> packingComponents =
+      _findPackingComponents();
   final Map<String, String> _representatives = {};
 
   String representative(String id) => _representatives.putIfAbsent(id, () => compounds.spectralRepresentative(id));

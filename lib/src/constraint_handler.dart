@@ -52,8 +52,10 @@ final class _RelaxationTopology {
   _Mulberry32? _random;
   var _latestCheckpoint = 0;
 
+  /// The relaxation order for [iteration]. The returned list is unmodifiable and
+  /// shared; callers only iterate it.
   List<String> orderAt(int iteration, {required int seed, required int precedingLength, required int followingLength}) {
-    if (iteration < _constraintShufflePeriod || order.length < 2) return List.of(order);
+    if (iteration < _constraintShufflePeriod || order.length < 2) return _ordersByCheckpoint[0]!;
     final targetCheckpoint = iteration ~/ _constraintShufflePeriod * _constraintShufflePeriod;
     _random ??= _Mulberry32(seed);
     while (_latestCheckpoint < targetCheckpoint) {
@@ -69,7 +71,7 @@ final class _RelaxationTopology {
       _latestCheckpoint += _constraintShufflePeriod;
       _ordersByCheckpoint[_latestCheckpoint] = List.unmodifiable(next);
     }
-    return List.of(_ordersByCheckpoint[targetCheckpoint]!);
+    return _ordersByCheckpoint[targetCheckpoint]!;
   }
 
   void _consumeShuffle(_Mulberry32 random, int length) {
@@ -157,13 +159,10 @@ final class ConstraintHandler {
 
     if (source.length < 2) return;
     final transform = _orthogonalProcrustes(source, target);
-    for (final entry in positions.entries.toList()) {
-      final point = entry.value;
-      positions[entry.key] = Offset(
-        point.x * transform.m00 + point.y * transform.m10,
-        point.x * transform.m01 + point.y * transform.m11,
-      );
-    }
+    positions.updateAll(
+      (_, point) =>
+          Offset(point.x * transform.m00 + point.y * transform.m10, point.x * transform.m01 + point.y * transform.m11),
+    );
     if (alignment.vertical.isNotEmpty || alignment.horizontal.isNotEmpty) {
       _reflectForRelativePlacements(positions);
     }
@@ -258,9 +257,7 @@ final class ConstraintHandler {
         translation += item.position - positions[item.nodeId]!;
       }
       translation /= fixed.length.toDouble();
-      for (final entry in positions.entries.toList()) {
-        positions[entry.key] = entry.value + translation;
-      }
+      positions.updateAll((_, point) => point + translation);
     }
     _enforceAxis(positions, fixed, alignment.vertical, _horizontalConstraints, horizontal: true);
     _enforceAxis(positions, fixed, alignment.horizontal, _verticalConstraints, horizontal: false);
@@ -352,9 +349,7 @@ final class ConstraintHandler {
     final flipX = reflectHorizontal > keepHorizontal;
     final flipY = reflectVertical > keepVertical;
     if (!flipX && !flipY) return;
-    for (final entry in positions.entries.toList()) {
-      positions[entry.key] = Offset(flipX ? -entry.value.x : entry.value.x, flipY ? -entry.value.y : entry.value.y);
-    }
+    positions.updateAll((_, point) => Offset(flipX ? -point.x : point.x, flipY ? -point.y : point.y));
   }
 
   /// Rewrites one iteration's pending leaf displacements using CoSE's

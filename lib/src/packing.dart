@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -271,6 +272,15 @@ final class _PackingGrid {
   /// Indices whose [_visited] flag is set, so [place] can reset only those
   /// instead of sweeping the whole grid as layout-utilities does.
   final List<int> _visitedCells = [];
+
+  /// Occupied cells with at least one free neighbor, in ascending index order.
+  ///
+  /// Because an index is `x * height + y`, that order is layout-utilities'
+  /// column-then-row scan order. Occupied cells enclosed by other occupied
+  /// cells contribute no neighbors, so iterating this set yields exactly the
+  /// candidates the upstream sweep over every occupied cell produces, at a cost
+  /// proportional to the placed perimeter rather than the placed area.
+  final SplayTreeSet<int> _boundaryCells = SplayTreeSet();
   int left = _largestExactJavaScriptInteger;
   int right = -_largestExactJavaScriptInteger;
   int top = _largestExactJavaScriptInteger;
@@ -289,13 +299,8 @@ final class _PackingGrid {
   List<int> directNeighbors(List<int> candidates, int level) {
     final result = <int>[];
     if (candidates.isEmpty) {
-      // Every occupied cell lies inside the placed bounding box, so scanning it
-      // is equivalent to layout-utilities' full-grid sweep and avoids a cost
-      // quadratic in the total component area.
-      for (var x = math.max(0, left); x <= math.min(width - 1, right); x++) {
-        for (var y = math.max(0, top); y <= math.min(height - 1, bottom); y++) {
-          if ((_flags[x * height + y] & _occupied) != 0) _addCellNeighbors(x, y, result);
-        }
+      for (final index in _boundaryCells) {
+        _addCellNeighbors(cellX(index), cellY(index), result);
       }
       var start = 0;
       var end = result.length - 1;
@@ -341,6 +346,24 @@ final class _PackingGrid {
     }
   }
 
+  /// Adds or removes `(x, y)` from [_boundaryCells] to match its flags.
+  void _refreshBoundary(int x, int y) {
+    final index = x * height + y;
+    if ((_flags[index] & _occupied) == 0) {
+      _boundaryCells.remove(index);
+      return;
+    }
+    for (var neighborX = x - 1; neighborX <= x + 1; neighborX++) {
+      for (var neighborY = y - 1; neighborY <= y + 1; neighborY++) {
+        if (neighborX < 0 || neighborX >= width || neighborY < 0 || neighborY >= height) continue;
+        if ((neighborX == x && neighborY == y) || (_flags[neighborX * height + neighborY] & _occupied) != 0) continue;
+        _boundaryCells.add(index);
+        return;
+      }
+    }
+    _boundaryCells.remove(index);
+  }
+
   bool canPlace(_Polyomino polyomino, int x, int y) {
     for (var localX = 0; localX < polyomino.stepWidth; localX++) {
       for (var localY = 0; localY < polyomino.stepHeight; localY++) {
@@ -361,6 +384,21 @@ final class _PackingGrid {
       for (var localY = 0; localY < polyomino.stepHeight; localY++) {
         if (polyomino.cells[localX][localY]) {
           _flags[(localX - polyomino.centerX + x) * height + (localY - polyomino.centerY + y)] = _occupied;
+        }
+      }
+    }
+    // Newly occupied cells join the frontier, and previously occupied neighbors
+    // may have just been enclosed by them.
+    for (var localX = 0; localX < polyomino.stepWidth; localX++) {
+      for (var localY = 0; localY < polyomino.stepHeight; localY++) {
+        if (!polyomino.cells[localX][localY]) continue;
+        final cellX = localX - polyomino.centerX + x;
+        final cellY = localY - polyomino.centerY + y;
+        for (var neighborX = cellX - 1; neighborX <= cellX + 1; neighborX++) {
+          for (var neighborY = cellY - 1; neighborY <= cellY + 1; neighborY++) {
+            if (neighborX < 0 || neighborX >= width || neighborY < 0 || neighborY >= height) continue;
+            _refreshBoundary(neighborX, neighborY);
+          }
         }
       }
     }

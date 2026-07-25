@@ -358,7 +358,9 @@ final class FcoseLayout {
       final descendants = graph.compounds.descendantLeaves(node.id);
       descendantCounts[index] = descendants.length;
       final fixedDescendantCount = descendants.where(fixed.contains).length;
-      movementWeights[index] = fixedDescendantCount == 0 ? descendants.length : fixedDescendantCount * 100;
+      movementWeights[index] = fixedDescendantCount == 0
+          ? descendants.length
+          : fixedDescendantCount * _fixedLeafMovementWeight;
       if (isCompound[index]) {
         unfixedDescendants[index] = Int32List.fromList([
           for (final leaf in descendants)
@@ -392,10 +394,11 @@ final class FcoseLayout {
     final maxCoolingCycle = maxIterations / _convergenceCheckPeriod;
     final coolingExponent = maxIterations <= _convergenceCheckPeriod
         ? 0.0
-        : math.log(100 * (options.initialEnergyOnIncremental - options.minTemperature)) / math.log(maxCoolingCycle);
+        : math.log(_coolingScale * (options.initialEnergyOnIncremental - options.minTemperature)) /
+              math.log(maxCoolingCycle);
     var repulsionPairs = <(int, int)>[];
     final averageIdealLength = _averageIdealEdgeLength(graph.edges);
-    final totalDisplacementThreshold = 0.03 * averageIdealLength * graph.graph.nodes.length;
+    final totalDisplacementThreshold = _convergenceDisplacementRatio * averageIdealLength * graph.graph.nodes.length;
     final repulsionRange = 2 * math.max(averageIdealLength, _minimumRepulsionRangeIdealEdgeLength).toDouble();
     final minimumComponentDistance = averageIdealLength / 10;
     final separationBuffer = averageIdealLength / 2;
@@ -424,7 +427,8 @@ final class FcoseLayout {
       if (checkConvergence && (checkConvergenceEveryTick || iterationNumber % _convergenceCheckPeriod == 0)) {
         final converged = totalDisplacement < totalDisplacementThreshold;
         final oscillating =
-            oscillationIterationOffset + iterationNumber > (oscillationIterationLimit ?? maxIterations) / 3 &&
+            oscillationIterationOffset + iterationNumber >
+                (oscillationIterationLimit ?? maxIterations) / _oscillationCheckStartFraction &&
             (totalDisplacement - oldTotalDisplacement).abs() < 2;
         oldTotalDisplacement = totalDisplacement;
         if (converged || oscillating) {
@@ -443,7 +447,7 @@ final class FcoseLayout {
             LayoutQuality.proof => 1.0,
           };
           coolingFactor = math.max(
-            options.initialEnergyOnIncremental - math.pow(coolingCycle, coolingExponent) / 100 * adjuster,
+            options.initialEnergyOnIncremental - math.pow(coolingCycle, coolingExponent) / _coolingScale * adjuster,
             options.minTemperature,
           );
         }
@@ -523,7 +527,7 @@ final class FcoseLayout {
           deltaX = intersection[2] - intersection[0];
           deltaY = intersection[3] - intersection[1];
         }
-        if (math.sqrt(deltaX * deltaX + deltaY * deltaY) < 1e-7) continue;
+        if (math.sqrt(deltaX * deltaX + deltaY * deltaY) < _degenerateSpringLength) continue;
         if (deltaX.abs() < _minimumSpringComponentLength) deltaX = deltaX.sign;
         if (deltaY.abs() < _minimumSpringComponentLength) deltaY = deltaY.sign;
         final length = math.sqrt(deltaX * deltaX + deltaY * deltaY);
@@ -561,7 +565,7 @@ final class FcoseLayout {
           displacementX += leafDisplacementX[index];
           displacementY += leafDisplacementY[index];
         }
-        final displacementLimit = coolingFactor * 100;
+        final displacementLimit = coolingFactor * _maximumDisplacementPerCoolingUnit;
         displacementX = displacementX.clamp(-displacementLimit, displacementLimit);
         displacementY = displacementY.clamp(-displacementLimit, displacementLimit);
         // CoSENode visits owner graphs in LGraphManager order. Each compound
@@ -1460,12 +1464,39 @@ const _postGrowthIterations = 100;
 /// layout-base `FDLayoutConstants.CONVERGENCE_CHECK_PERIOD`, in iterations.
 const _convergenceCheckPeriod = 100;
 
+/// layout-base `FDLayoutConstants.CONVERGENCE_DISPLACEMENT_RATIO`: the spring
+/// phase converges once total per-tick displacement falls below this fraction
+/// of one ideal edge length per node.
+const _convergenceDisplacementRatio = 0.03;
+
+/// Oscillation detection stays off for the first third of the iteration budget,
+/// where a flat total displacement still means the layout is spreading out.
+const _oscillationCheckStartFraction = 3;
+
 /// layout-base `LayoutConstants.DEFAULT_GRAPH_MARGIN`, in pixels.
 const _layoutBaseGraphMargin = 15.0;
 
 /// layout-base `FDLayout.initSpringEmbedder()` runs at least five iterations
 /// per CoSE node, even when the configured maximum is smaller.
 const _minimumIterationsPerNode = 5;
+
+/// cose-base weights each fixed leaf below a compound at one hundred ordinary
+/// descendants, so forces on the ancestor barely move its unfixed subtree.
+const _fixedLeafMovementWeight = 100;
+
+/// Denominator of the cooling schedule: cose-base spreads the temperature drop
+/// from `initialEnergyOnIncremental` to `minTemperature` over `1 / 100` steps of
+/// `coolingCycle ^ coolingExponent`, and derives that exponent from the same
+/// scale.
+const _coolingScale = 100;
+
+/// layout-base `FDLayout` clamps each node to `coolingFactor * 100` pixels of
+/// movement per tick.
+const _maximumDisplacementPerCoolingUnit = 100;
+
+/// Below this length a clipped spring is treated as degenerate and skipped;
+/// `LEdge.updateLength()` marks such an edge as overlapping instead.
+const _degenerateSpringLength = 1e-7;
 
 final class _SpringPhaseResult {
   const _SpringPhaseResult(

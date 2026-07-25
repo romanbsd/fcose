@@ -10,6 +10,10 @@ final class IncrementalComponentPacker {
   static const _defaultIterationCount = 100;
   static const _edgeRefreshPeriod = 5;
 
+  /// POSE scales its attractive force by three times the base-2 logarithm of
+  /// the gap measured in spacing units.
+  static const _attractiveForceScale = 3;
+
   final double componentSpacing;
   final int iterations;
   double get _effectiveSpacing => math.max(1, componentSpacing);
@@ -61,7 +65,7 @@ final class IncrementalComponentPacker {
   }
 
   double _attractiveForce(double squaredDistance) =>
-      3 * (math.log(math.sqrt(squaredDistance) / _effectiveSpacing) / math.ln2);
+      _attractiveForceScale * (math.log(math.sqrt(squaredDistance) / _effectiveSpacing) / math.ln2);
 
   double _repulsiveForce(double squaredDistance) => -(_effectiveSpacing * _effectiveSpacing / squaredDistance - 1);
 
@@ -160,10 +164,18 @@ void _connect(List<Set<int>> neighbors, int first, int second) {
   neighbors[second].add(first);
 }
 
+/// Cross products below this are treated as collinear, which routes packing to
+/// the ordered chain instead of a degenerate triangulation.
+const _collinearityTolerance = 1e-10;
+
+/// Multiple of the input span placing the Bowyer-Watson seed triangle far
+/// enough out that every input circumcircle stays inside it.
+const _seedTriangleSpanFactor = 20;
+
 bool _areCollinear(List<Offset> points) {
   final first = points.first;
   final second = points[1];
-  return points.skip(2).every((point) => _orientation(first, second, point).abs() <= 1e-10);
+  return points.skip(2).every((point) => _orientation(first, second, point).abs() <= _collinearityTolerance);
 }
 
 List<({int first, int second, int third})> _delaunayTriangles(List<Offset> input) {
@@ -179,12 +191,11 @@ List<({int first, int second, int third})> _delaunayTriangles(List<Offset> input
   }
   final span = math.max(right - left, bottom - top);
   final center = Offset((left + right) / 2, (top + bottom) / 2);
-  // A 20x span leaves every input circumcircle inside the seed triangle.
   final points = [
     ...input,
-    Offset(center.x - 20 * span, center.y - span),
-    Offset(center.x, center.y + 20 * span),
-    Offset(center.x + 20 * span, center.y - span),
+    Offset(center.x - _seedTriangleSpanFactor * span, center.y - span),
+    Offset(center.x, center.y + _seedTriangleSpanFactor * span),
+    Offset(center.x + _seedTriangleSpanFactor * span, center.y - span),
   ];
   final inputCount = input.length;
   var triangles = <({int first, int second, int third})>[

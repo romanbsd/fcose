@@ -11,6 +11,18 @@ final class SpectralResult {
   final List<String> samples;
 }
 
+/// Greater than any distance in a connected graph this initializer accepts, so
+/// the first BFS sweep always wins the running minimum.
+const _unreachableDistance = 1 << 30;
+
+/// Nonzero seed for the power iteration's ratio test; the first comparison
+/// would otherwise divide by zero.
+const _powerIterationSeed = 1e-9;
+
+/// Caps the power iteration if its ratio test never settles inside the
+/// configured tolerance.
+const _powerIterationLimit = 1000;
+
 /// Sampled pivot-distance spectral initializer used by fCoSE.
 final class SpectralInitializer {
   SpectralInitializer({
@@ -97,7 +109,7 @@ final class SpectralInitializer {
   List<String> _greedySamples(List<String> nodes, Set<String> allowed, Map<String, Set<String>> adjacency, int count) {
     var current = nodes[_random.nextInt(nodes.length)];
     final result = <String>[];
-    final minimum = {for (final node in nodes) node: 1 << 30};
+    final minimum = {for (final node in nodes) node: _unreachableDistance};
     while (result.length < count) {
       result.add(current);
       final distance = _distances(current, allowed, adjacency);
@@ -131,9 +143,9 @@ final class SpectralInitializer {
     List<double>? orthogonalTo,
   }) {
     var vector = _normalize(initial);
-    var previous = 1e-9;
+    var previous = _powerIterationSeed;
     var eigenvalue = 0.0;
-    for (var iteration = 0; iteration < 1000; iteration++) {
+    for (var iteration = 0; iteration < _powerIterationLimit; iteration++) {
       if (orthogonalTo != null) {
         final projection = _dot(orthogonalTo, vector);
         vector = List.generate(vector.length, (i) => vector[i] - orthogonalTo[i] * projection);

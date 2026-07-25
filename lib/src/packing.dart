@@ -33,6 +33,19 @@ final class PackingComponent {
 
 /// Randomized polyomino packing from cytoscape-layout-utilities 1.1.1.
 final class RandomizedComponentPacker {
+  /// Subtracted from `componentSpacing`, as layout-utilities puts it, "to make
+  /// it compatible with the incremental packing". Polyominos inflate every node
+  /// by the result, so the same option yields comparable gaps in both packers.
+  static const _incrementalSpacingOffset = 52;
+
+  /// Larger than any reachable aspect-ratio difference, so the first candidate
+  /// always wins its comparison.
+  static const _unreachableAspectRatioDifference = 1000000.0;
+
+  /// [PackingUtility.weighted] splits its score evenly between how full the
+  /// grid becomes and how close the result stays to [desiredAspectRatio].
+  static const _weightedUtilityShare = 0.5;
+
   const RandomizedComponentPacker({
     this.componentSpacing = 80,
     this.desiredAspectRatio = 1,
@@ -53,7 +66,7 @@ final class RandomizedComponentPacker {
         components.expand((component) => component.nodes).fold(0.0, (sum, node) => sum + node.width + node.height) /
         (2 * nodeCount);
     final gridStep = math.max(1, (averageDimension * gridSizeFactor).floor());
-    final spacing = math.max(1.0, componentSpacing - 52);
+    final spacing = math.max(1.0, componentSpacing - _incrementalSpacingOffset);
 
     var gridWidth = 0.0;
     var gridHeight = 0.0;
@@ -121,7 +134,7 @@ final class RandomizedComponentPacker {
       var bestFullness = 0.0;
       var bestAdjustedFullness = 0.0;
       var bestWeightedUtility = 0.0;
-      var minimumAspectRatioDifference = 1000000.0;
+      var minimumAspectRatioDifference = _unreachableAspectRatioDifference;
       while (selected == null) {
         candidates = grid.directNeighbors(candidates, (math.max(polyomino.stepWidth, polyomino.stepHeight) / 2).ceil());
         for (final candidate in candidates) {
@@ -146,7 +159,8 @@ final class RandomizedComponentPacker {
             case PackingUtility.weighted:
               final aspectDifference = (value.aspectRatio - desiredAspectRatio).abs();
               final weighted =
-                  value.fullness * 0.5 + (1 - aspectDifference / math.max(value.aspectRatio, desiredAspectRatio) * 0.5);
+                  value.fullness * _weightedUtilityShare +
+                  (1 - aspectDifference / math.max(value.aspectRatio, desiredAspectRatio) * _weightedUtilityShare);
               choose = weighted > bestWeightedUtility;
               if (choose) bestWeightedUtility = weighted;
           }

@@ -216,7 +216,7 @@ final class FcoseLayout {
               samplingType: options.samplingType,
               nodeSeparation: options.nodeSeparation,
               tolerance: options.powerIterationTolerance,
-              seed: random.nextUint32() % 0x7fffffff,
+              random: random,
             )
             .run(
               spectral.nodes,
@@ -1277,6 +1277,14 @@ final class FcoseLayout {
   /// packing off, and with it the split into per-component layouts.
   bool get _packingEnabled => options.packComponents && !_hasConstraints;
 
+  /// Which geometry the closing relocation measures.
+  ///
+  /// A draft run stops after the spectral phase and never builds the cose-base
+  /// graph, so upstream measures the spectral result, which holds only leaves.
+  /// Every other quality measures the laid-out cose-base nodes, whose
+  /// rectangles include the padding of each compound.
+  bool get _relocatesByLeafBounds => options.quality == LayoutQuality.draft;
+
   bool get _hasConstraints =>
       options.fixedNodes.isNotEmpty ||
       options.alignment.vertical.isNotEmpty ||
@@ -1284,6 +1292,12 @@ final class FcoseLayout {
       options.relativePlacements.isNotEmpty;
 
   List<Offset> _componentCenters(_WorkingGraph graph, Map<String, Offset> positions) {
+    if (_relocatesByLeafBounds) {
+      return [
+        for (final component in graph.packingComponents)
+          _leafBounds([for (final id in component.leaves) graph.nodeById[id]!], positions).center,
+      ];
+    }
     final rectangles = _paddedRectangles(graph.compounds, positions);
     return [
       for (final component in graph.packingComponents)
@@ -1412,6 +1426,7 @@ final class FcoseLayout {
   }
 
   Rect _graphBounds(_WorkingGraph graph, Map<String, Offset> positions) {
+    if (_relocatesByLeafBounds) return _leafBounds(graph.leaves, positions);
     final rectangles = _paddedRectangles(graph.compounds, positions);
     final roots = graph.graph.childrenByParent[null]!;
     var bounds = rectangles[roots.first.id]!;

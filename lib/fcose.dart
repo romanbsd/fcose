@@ -7,4 +7,5 @@ export 'src/geometry.dart';
 export 'src/layout.dart';
 export 'src/model.dart';
 export 'src/options.dart';
+export 'src/random.dart';
 export 'src/spectral.dart';

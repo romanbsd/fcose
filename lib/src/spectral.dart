@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'geometry.dart';
 import 'options.dart';
 import 'random.dart';
+import 'svd.dart';
 
 final class SpectralResult {
   const SpectralResult(this.positions, this.samples);
@@ -29,16 +30,19 @@ final class SpectralInitializer {
     required this.sampleSize,
     required this.samplingType,
     required this.nodeSeparation,
-    required this.seed,
+    required this.random,
     this.tolerance = 1e-7,
-  }) : _random = Xorshift32(seed);
+  });
 
   final int sampleSize;
   final SamplingType samplingType;
   final double nodeSeparation;
-  final int seed;
   final double tolerance;
-  final Xorshift32 _random;
+
+  /// Shared with the rest of the layout, because fCoSE draws its samples, its
+  /// eigenvector guesses and its tree-growth choices from one `Math.random`
+  /// stream, and a generator of its own here would shift every later draw.
+  final Xorshift32 random;
 
   SpectralResult run(
     List<String> nodes,
@@ -78,7 +82,7 @@ final class SpectralInitializer {
     final inverse = _regularizedInverse(phi);
     final initialVectors = List.generate(
       nodes.length,
-      (_) => (first: _random.nextDouble(), second: _random.nextDouble()),
+      (_) => (first: random.nextDouble(), second: random.nextDouble()),
     );
     final first = _powerVector(c, inverse, initial: [for (final values in initialVectors) values.first]);
     final second = _powerVector(
@@ -100,14 +104,14 @@ final class SpectralInitializer {
     final result = <String>[];
     final selected = <String>{};
     while (result.length < count) {
-      final sample = nodes[_random.nextInt(nodes.length)];
+      final sample = nodes[random.nextInt(nodes.length)];
       if (selected.add(sample)) result.add(sample);
     }
     return result;
   }
 
   List<String> _greedySamples(List<String> nodes, Set<String> allowed, Map<String, Set<String>> adjacency, int count) {
-    var current = nodes[_random.nextInt(nodes.length)];
+    var current = nodes[random.nextInt(nodes.length)];
     final result = <String>[];
     final minimum = {for (final node in nodes) node: _unreachableDistance};
     while (result.length < count) {
@@ -185,97 +189,54 @@ final class SpectralInitializer {
     return _center(result);
   }
 
+  /// The regularized pseudo-inverse of PHI that upstream fCoSE builds from its
+  /// SVD: `V * diag(s / (s^2 + sMax^3 / s^2)) * U^T`. A zero singular value
+  /// divides to infinity and so leaves a zero on the diagonal, which is how
+  /// upstream handles a rank-deficient sample.
   List<List<double>> _regularizedInverse(List<List<double>> matrix) {
     final size = matrix.length;
-    final transposeProduct = List.generate(size, (_) => List<double>.filled(size, 0));
-    for (var row = 0; row < size; row++) {
-      for (var column = row; column < size; column++) {
-        var value = 0.0;
-        for (var inner = 0; inner < size; inner++) {
-          value += matrix[inner][row] * matrix[inner][column];
-        }
-        transposeProduct[row][column] = value;
-        transposeProduct[column][row] = value;
-      }
-    }
-
-    final decomposition = _symmetricEigenDecomposition(transposeProduct);
-    final order = List.generate(size, (index) => index)
-      ..sort((first, second) => decomposition.values[second].compareTo(decomposition.values[first]));
-    final singularValues = [for (final index in order) math.sqrt(math.max(0, decomposition.values[index]))];
-    final largestCubed = math.pow(singularValues.first, 3).toDouble();
-    final inverse = List.generate(size, (_) => List<double>.filled(size, 0));
-
-    // This is the regularization used by upstream fCoSE after SVD(PHI):
-    // V * diag(s / (s^2 + sMax^3 / s^2)) * U^T.
-    for (var rank = 0; rank < size; rank++) {
-      final singular = singularValues[rank];
-      if (singular <= _singularValueTolerance) continue;
-      final sourceColumn = order[rank];
-      final right = [for (var row = 0; row < size; row++) decomposition.vectors[row][sourceColumn]];
-      final left = List<double>.filled(size, 0);
-      for (var row = 0; row < size; row++) {
-        for (var column = 0; column < size; column++) {
-          left[row] += matrix[row][column] * right[column] / singular;
-        }
-      }
-      final coefficient = singular / (singular * singular + largestCubed / (singular * singular));
-      for (var row = 0; row < size; row++) {
-        for (var column = 0; column < size; column++) {
-          inverse[row][column] += coefficient * right[row] * left[column];
-        }
-      }
-    }
-    return inverse;
+    final decomposition = decompose(matrix);
+    final values = decomposition.singularValues;
+    final largestCubed = values.first * values.first * values.first;
+    final sigma = [
+      for (var row = 0; row < size; row++)
+        [
+          for (var column = 0; column < size; column++)
+            if (row == column)
+              values[row] / (values[row] * values[row] + largestCubed / (values[row] * values[row]))
+            else
+              0.0,
+        ],
+    ];
+    return _multiply(_multiply(decomposition.v, sigma), _transpose(decomposition.u));
   }
 
-  ({List<double> values, List<List<double>> vectors}) _symmetricEigenDecomposition(List<List<double>> input) {
-    final size = input.length;
-    final values = [for (final row in input) List<double>.of(row)];
-    final vectors = List.generate(size, (row) => List.generate(size, (column) => row == column ? 1.0 : 0.0));
-    final maximumSweeps = math.max(_minimumJacobiSweeps, size * size * _jacobiSweepsPerEntry);
-    for (var sweep = 0; sweep < maximumSweeps; sweep++) {
-      var pivotRow = 0;
-      var pivotColumn = 1;
-      var maximum = 0.0;
-      for (var row = 0; row < size; row++) {
-        for (var column = row + 1; column < size; column++) {
-          if (values[row][column].abs() > maximum) {
-            maximum = values[row][column].abs();
-            pivotRow = row;
-            pivotColumn = column;
-          }
+  List<List<double>> _multiply(List<List<double>> first, List<List<double>> second) {
+    final result = List.generate(first.length, (_) => List<double>.filled(second.first.length, 0));
+    for (var row = 0; row < first.length; row++) {
+      for (var column = 0; column < second.first.length; column++) {
+        var sum = 0.0;
+        for (var inner = 0; inner < first.first.length; inner++) {
+          sum += first[row][inner] * second[inner][column];
         }
-      }
-      if (maximum <= _jacobiTolerance) break;
-
-      final diagonalDifference = values[pivotColumn][pivotColumn] - values[pivotRow][pivotRow];
-      final angle = 0.5 * math.atan2(2 * values[pivotRow][pivotColumn], diagonalDifference);
-      final cosine = math.cos(angle);
-      final sine = math.sin(angle);
-      for (var index = 0; index < size; index++) {
-        final rowValue = values[pivotRow][index];
-        final columnValue = values[pivotColumn][index];
-        values[pivotRow][index] = cosine * rowValue - sine * columnValue;
-        values[pivotColumn][index] = sine * rowValue + cosine * columnValue;
-      }
-      for (var index = 0; index < size; index++) {
-        final rowValue = values[index][pivotRow];
-        final columnValue = values[index][pivotColumn];
-        values[index][pivotRow] = cosine * rowValue - sine * columnValue;
-        values[index][pivotColumn] = sine * rowValue + cosine * columnValue;
-        final vectorRow = vectors[index][pivotRow];
-        final vectorColumn = vectors[index][pivotColumn];
-        vectors[index][pivotRow] = cosine * vectorRow - sine * vectorColumn;
-        vectors[index][pivotColumn] = sine * vectorRow + cosine * vectorColumn;
+        result[row][column] = sum;
       }
     }
-    return (values: [for (var i = 0; i < size; i++) values[i][i]], vectors: vectors);
+    return result;
   }
+
+  List<List<double>> _transpose(List<List<double>> matrix) => [
+    for (var row = 0; row < matrix.first.length; row++)
+      [for (var column = 0; column < matrix.length; column++) matrix[column][row]],
+  ];
 
   List<double> _center(List<double> values) {
-    final average = values.fold(0.0, (sum, value) => sum + value) / values.length;
-    return [for (final value in values) value - average];
+    var sum = 0.0;
+    for (final value in values) {
+      sum += value;
+    }
+    sum *= -1 / values.length;
+    return [for (final value in values) sum + value];
   }
 
   List<double> _normalize(List<double> values) {
@@ -291,8 +252,3 @@ final class SpectralInitializer {
     return result;
   }
 }
-
-const _singularValueTolerance = 1e-12;
-const _jacobiTolerance = 1e-12;
-const _minimumJacobiSweeps = 32;
-const _jacobiSweepsPerEntry = 8;

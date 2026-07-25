@@ -258,7 +258,7 @@ void main() {
         sampleSize: 3,
         samplingType: SamplingType.greedy,
         nodeSeparation: 75,
-        seed: 4,
+        random: Xorshift32(4),
       ).run(nodes, adjacency);
       expect(result.samples, hasLength(3));
       expect(result.samples.toSet(), hasLength(3));
@@ -270,7 +270,7 @@ void main() {
         sampleSize: 4,
         samplingType: SamplingType.random,
         nodeSeparation: 75,
-        seed: 11,
+        random: Xorshift32(11),
       ).run(nodes, adjacency);
       expect(run().samples, run().samples);
       expect(run().samples, hasLength(4));
@@ -306,7 +306,7 @@ void main() {
         sampleSize: 25,
         samplingType: SamplingType.greedy,
         nodeSeparation: 75,
-        seed: 1,
+        random: Xorshift32(1),
       );
       final result = initializer.run(
         ['a', 'b'],
@@ -2078,15 +2078,13 @@ void main() {
         ),
       );
 
-      // Port values. Against tool/oracle/specs/draft-nested-compound.json the
-      // layout still comes out mirrored on x, and the edgeless child sits five
-      // pixels off the center upstream gives it.
-      expect(result.positionOf('busy').x, closeTo(144.99898100619518, 1e-3));
-      expect(result.positionOf('busy').y.abs(), closeTo(7.323581183794171, 1e-3));
-      expect(result.positionOf('quiet').x, closeTo(-4.99999999202292, 1e-3));
-      expect(result.positionOf('quiet').y.abs(), closeTo(7.323581265484937, 1e-3));
-      expect(result.positionOf('standalone').x, closeTo(-154.99898100619515, 1e-3));
-      expect(result.positionOf('standalone').y.abs(), closeTo(7.323581347175437, 1e-3));
+      // Upstream values from tool/oracle/specs/draft-nested-compound.json.
+      expect(result.positionOf('busy').x, closeTo(-149.99898100619524, 1e-9));
+      expect(result.positionOf('busy').y, closeTo(-7.323581344185225, 1e-9));
+      expect(result.positionOf('quiet').x, closeTo(1.5369854544902844e-8, 1e-9));
+      expect(result.positionOf('quiet').y, closeTo(7.323581344185227, 1e-9));
+      expect(result.positionOf('standalone').x, closeTo(149.99898100619524, 1e-9));
+      expect(result.positionOf('standalone').y, closeTo(-7.3235810293843855, 1e-9));
       expect(result.rectOf('left').containsRect(result.rectOf('busy')), isTrue);
       expect(result.rectOf('outer').containsRect(result.rectOf('standalone')), isTrue);
     });

@@ -21,7 +21,7 @@ void main(List<String> arguments) {
   final tolerance = toleranceIndex == -1 ? _defaultTolerance : double.parse(arguments[toleranceIndex + 1]);
   final specPaths = [
     for (final (index, argument) in arguments.indexed)
-      if (index != toleranceIndex && index != toleranceIndex + 1) argument,
+      if (toleranceIndex == -1 || (index != toleranceIndex && index != toleranceIndex + 1)) argument,
   ];
   if (specPaths.isEmpty) {
     stderr.writeln('usage: dart run tool/parity.dart <spec.json>... [--tolerance <pixels>]');
@@ -32,8 +32,13 @@ void main(List<String> arguments) {
   for (final specPath in specPaths) {
     final spec = jsonDecode(File(specPath).readAsStringSync()) as Map<String, Object?>;
     final port = _runPort(spec);
-    final upstream = _runOracle(specPath);
-    failed |= !_report(specPath, port, upstream, tolerance);
+    try {
+      failed |= !_report(specPath, port, _runOracle(specPath), tolerance);
+    } on _UpstreamNotNumeric catch (error) {
+      // A spec kept around to document an upstream defect cannot be compared,
+      // so it is reported and skipped rather than counted as a mismatch.
+      stdout.writeln('skip ${_name(specPath)}  $error');
+    }
   }
   exit(failed ? 1 : 0);
 }
@@ -59,7 +64,16 @@ Map<String, Offset> _runPort(Map<String, Object?> spec) {
     ],
   );
   final result = FcoseLayout(options: _options(spec, graph)).run(graph);
-  return {for (final node in specNodes) node['id']! as String: result.positionOf(node['id']! as String)};
+  // Only leaves are comparable: upstream hands `layoutPositions` the nodes
+  // matching `:parent` negated, so a compound's coordinate is whatever
+  // Cytoscape's compound-bounds rule derives from its children, which pads
+  // every box by a pixel for antialiasing and another for the default parent
+  // border. That is a rendering convention, not a layout result.
+  final parents = {for (final node in specNodes) node['parent'] as String?};
+  return {
+    for (final node in specNodes)
+      if (!parents.contains(node['id'])) node['id']! as String: result.positionOf(node['id']! as String),
+  };
 }
 
 FcoseOptions _options(Map<String, Object?> spec, FcoseGraph graph) {
@@ -105,6 +119,9 @@ FcoseOptions _options(Map<String, Object?> spec, FcoseGraph graph) {
     compoundGravity: _number(options['gravityCompound']) ?? const FcoseOptions().compoundGravity,
     compoundGravityRange: _number(options['gravityRangeCompound']) ?? const FcoseOptions().compoundGravityRange,
     nestingFactor: _number(options['nestingFactor']) ?? const FcoseOptions().nestingFactor,
+    // The oracle's stylesheet sets `padding: 0` on every node, which overrides
+    // the 10 that Cytoscape's default `:parent` rule would otherwise apply.
+    compoundPadding: 0,
     uniformNodeDimensions: options['uniformNodeDimensions'] as bool? ?? const FcoseOptions().uniformNodeDimensions,
     packComponents: options['packComponents'] as bool? ?? const FcoseOptions().packComponents,
     tile: options['tile'] as bool? ?? const FcoseOptions().tile,
@@ -185,7 +202,7 @@ Map<String, Offset> _runOracle(String specPath) {
       // the note on specs/draft-disconnected.json in tool/oracle/README.md.
       entry.key: switch (entry.value) {
         [final num x, final num y] => Offset(x.toDouble(), y.toDouble()),
-        final value => throw StateError('upstream placed ${entry.key} at $value in $specPath'),
+        final value => throw _UpstreamNotNumeric('upstream placed ${entry.key} at $value'),
       },
   };
 }
@@ -206,10 +223,20 @@ bool _report(String specPath, Map<String, Offset> port, Map<String, Offset> upst
       mismatches.add('  $id port ${port[id]!.x}, ${port[id]!.y}  upstream ${expected.x}, ${expected.y}');
     }
   }
-  final name = specPath.split(Platform.pathSeparator).last;
-  stdout.writeln('${mismatches.isEmpty ? 'ok  ' : 'FAIL'} $name  worst delta $worst');
+  stdout.writeln('${mismatches.isEmpty ? 'ok  ' : 'FAIL'} ${_name(specPath)}  worst delta $worst');
   mismatches.forEach(stdout.writeln);
   return mismatches.isEmpty;
+}
+
+String _name(String specPath) => specPath.split(Platform.pathSeparator).last;
+
+/// Upstream finished with a coordinate that is not a number; see the note on
+/// specs/draft-disconnected.json in tool/oracle/README.md.
+final class _UpstreamNotNumeric implements Exception {
+  _UpstreamNotNumeric(this.message);
+  final String message;
+  @override
+  String toString() => message;
 }
 
 double? _number(Object? value) => (value as num?)?.toDouble();

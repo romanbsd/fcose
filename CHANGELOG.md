@@ -33,3 +33,10 @@
   and component packing while retaining the layout-wide fallback.
 - Match CoSE's ten-pixel internal ideal-length floor when calculating sparse
   repulsion-grid neighborhoods without changing configured spring lengths.
+- Measure draft-quality recentering on leaf bounds, as upstream does when it
+  never builds the cose-base graph.
+- Draw spectral samples and eigenvector guesses from the layout's own random
+  stream, matching upstream's single sequence of `Math.random` calls.
+- Replace the spectral pseudo-inverse with a transcription of the JAMA
+  singular value decomposition that layout-base uses, so compound spectral
+  layouts now match upstream to about 1e-13.

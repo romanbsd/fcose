@@ -87,7 +87,7 @@ final class FcoseLayout {
 
     if (_shouldTileFlatZeroDegreeNodes(working)) {
       _tileFlatZeroDegreeNodes(working, positions, tilingPadding);
-      final rectangles = working.compounds.rectangles(positions, padding: options.compoundPadding);
+      final rectangles = _paddedRectangles(working.compounds, positions);
       final effectiveMax = math.max(options.maxIterations, _minimumIterationsPerNode);
       return FcoseResult(
         positions: positions,
@@ -119,7 +119,7 @@ final class FcoseLayout {
       }
     }
 
-    final rectangles = working.compounds.rectangles(positions, padding: options.compoundPadding);
+    final rectangles = _paddedRectangles(working.compounds, positions);
     final allPositions = <String, Offset>{
       ...positions,
       for (final node in working.graph.nodes)
@@ -128,6 +128,13 @@ final class FcoseLayout {
     final result = FcoseResult(positions: allPositions, rectangles: rectangles, iterations: iterations);
     return tiling == null ? result : _restoreTiling(resolvedGraph, tiling, result);
   }
+
+  /// Node geometry for [positions] under the configured compound padding.
+  ///
+  /// Every phase measures compounds this way; only the tiling restore, which
+  /// reconstructs the pre-padding graph, asks for unpadded rectangles.
+  Map<String, Rect> _paddedRectangles(CompoundGraphManager compounds, Map<String, Offset> positions) =>
+      compounds.rectangles(positions, padding: options.compoundPadding);
 
   FcoseGraph _resolveElementOptions(FcoseGraph graph) {
     final seenPairs = <(String, String)>{};
@@ -452,7 +459,7 @@ final class FcoseLayout {
           );
         }
       }
-      final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
+      final rectangles = _paddedRectangles(graph.compounds, positions);
       for (var index = 0; index < nodeCount; index++) {
         rectangleByIndex[index] = rectangles[nodes[index].id]!;
         forceX[index] = 0;
@@ -625,7 +632,7 @@ final class FcoseLayout {
       return;
     }
 
-    final rectangles = activeGraph.compounds.rectangles(positions, padding: options.compoundPadding);
+    final rectangles = _paddedRectangles(activeGraph.compounds, positions);
     final nodes = activeGraph.compounds.layoutOrder;
     final rootNodes = activeGraph.graph.childrenByParent[null]!;
     var rootBounds = rectangles[rootNodes.first.id]!;
@@ -1068,7 +1075,7 @@ final class FcoseLayout {
         ),
       );
       if (entry.key == null && !options.randomize) {
-        final initialRectangles = compounds.rectangles(initialPositions, padding: options.compoundPadding);
+        final initialRectangles = _paddedRectangles(compounds, initialPositions);
         originalBoundsCenter = compounds.ownerBounds(null, initialRectangles).center;
       }
     }
@@ -1195,9 +1202,9 @@ final class FcoseLayout {
     }
 
     final compounds = CompoundGraphManager(graph);
-    var restoredRectangles = compounds.rectangles({
+    var restoredRectangles = _paddedRectangles(compounds, {
       for (final leaf in graph.leafNodes) leaf.id: positions[leaf.id]!,
-    }, padding: options.compoundPadding);
+    });
     var restoredPositions = <String, Offset>{
       for (final leaf in graph.leafNodes) leaf.id: positions[leaf.id]!,
       for (final node in graph.nodes)
@@ -1266,7 +1273,7 @@ final class FcoseLayout {
       options.relativePlacements.isNotEmpty;
 
   List<Offset> _componentCenters(_WorkingGraph graph, Map<String, Offset> positions) {
-    final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
+    final rectangles = _paddedRectangles(graph.compounds, positions);
     return [
       for (final component in graph.packingComponents)
         component.roots.skip(1).fold(rectangles[component.roots.first]!, (bounds, root) {
@@ -1291,7 +1298,7 @@ final class FcoseLayout {
 
   void _packComponents(_WorkingGraph graph, Map<String, Offset> positions) {
     if (!options.packComponents || graph.packingComponents.length < 2 || options.fixedNodes.isNotEmpty) return;
-    final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
+    final rectangles = _paddedRectangles(graph.compounds, positions);
     final packingInput = <PackingComponent>[];
     for (final component in graph.packingComponents) {
       final memberIds = component.nodes.toSet();
@@ -1394,7 +1401,7 @@ final class FcoseLayout {
   }
 
   Rect _graphBounds(_WorkingGraph graph, Map<String, Offset> positions) {
-    final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
+    final rectangles = _paddedRectangles(graph.compounds, positions);
     final roots = graph.graph.childrenByParent[null]!;
     var bounds = rectangles[roots.first.id]!;
     for (final root in roots.skip(1)) {

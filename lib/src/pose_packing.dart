@@ -21,7 +21,7 @@ final class IncrementalComponentPacker {
   List<Offset> pack(List<PackingComponent> components) {
     if (components.length < 2) return List.filled(components.length, Offset.zero);
 
-    final currentCenter = _layoutUtilitiesCenter(components);
+    final currentCenter = PackingComponent.utilitiesCenter(components);
     final polygons = [for (final component in components) _PosePolygon.fromComponent(component)];
     var edges = _constructEdges(polygons);
     var repulsionEdges = _ascendingNeighbors(edges);
@@ -60,7 +60,7 @@ final class IncrementalComponentPacker {
     final shifted = [
       for (var index = 0; index < components.length; index++) components[index].translated(rawShifts[index]),
     ];
-    final centerShift = currentCenter - _layoutUtilitiesCenter(shifted);
+    final centerShift = currentCenter - PackingComponent.utilitiesCenter(shifted);
     return [for (final shift in rawShifts) shift + centerShift];
   }
 
@@ -94,20 +94,6 @@ final class IncrementalComponentPacker {
     forces[first] = forces[first] + force;
     forces[second] = forces[second] - force;
   }
-}
-
-Offset _layoutUtilitiesCenter(Iterable<PackingComponent> components) {
-  var left = double.maxFinite;
-  var right = -double.maxFinite;
-  var top = double.maxFinite;
-  var bottom = -double.maxFinite;
-  for (final node in components.expand((component) => component.nodes)) {
-    left = math.min(left, node.left);
-    right = math.max(right, node.right - 1);
-    top = math.min(top, node.top);
-    bottom = math.max(bottom, node.bottom - 1);
-  }
-  return Offset((left + right) / 2, (top + bottom) / 2);
 }
 
 List<List<int>> _constructEdges(List<_PosePolygon> polygons) {

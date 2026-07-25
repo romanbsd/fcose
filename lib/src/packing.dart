@@ -17,6 +17,23 @@ final class PackingComponent {
     edges: [for (final edge in edges) (start: edge.start + shift, end: edge.end + shift)],
   );
 
+  /// Bounding-box center as layout-utilities measures it, with the right and
+  /// bottom edges one pixel short of the real bounds. Both packers restore this
+  /// center after placing components, so the quirk has to survive.
+  static Offset utilitiesCenter(Iterable<PackingComponent> components) {
+    var left = double.maxFinite;
+    var right = -double.maxFinite;
+    var top = double.maxFinite;
+    var bottom = -double.maxFinite;
+    for (final node in components.expand((component) => component.nodes)) {
+      left = math.min(left, node.left);
+      right = math.max(right, node.right - 1);
+      top = math.min(top, node.top);
+      bottom = math.max(bottom, node.bottom - 1);
+    }
+    return Offset((left + right) / 2, (top + bottom) / 2);
+  }
+
   static Rect combinedBounds(Iterable<PackingComponent> components) {
     final nodes = components.expand((component) => component.nodes);
     final iterator = nodes.iterator;
@@ -60,7 +77,7 @@ final class RandomizedComponentPacker {
 
   List<Offset> pack(List<PackingComponent> components) {
     if (components.length < 2) return List.filled(components.length, Offset.zero);
-    final currentCenter = _layoutUtilitiesCenter(components);
+    final currentCenter = PackingComponent.utilitiesCenter(components);
     final nodeCount = components.fold(0, (sum, component) => sum + component.nodes.length);
     final averageDimension =
         components.expand((component) => component.nodes).fold(0.0, (sum, node) => sum + node.width + node.height) /
@@ -188,24 +205,10 @@ final class RandomizedComponentPacker {
           edges: components[index].edges,
         ),
     ];
-    final packedCenter = _layoutUtilitiesCenter(expandedComponents);
+    final packedCenter = PackingComponent.utilitiesCenter(expandedComponents);
     final centerShift = currentCenter - packedCenter;
     return [for (final shift in rawShifts) shift + centerShift];
   }
-}
-
-Offset _layoutUtilitiesCenter(Iterable<PackingComponent> components) {
-  var left = double.maxFinite;
-  var right = -double.maxFinite;
-  var top = double.maxFinite;
-  var bottom = -double.maxFinite;
-  for (final node in components.expand((component) => component.nodes)) {
-    left = math.min(left, node.left);
-    right = math.max(right, node.right - 1);
-    top = math.min(top, node.top);
-    bottom = math.max(bottom, node.bottom - 1);
-  }
-  return Offset((left + right) / 2, (top + bottom) / 2);
 }
 
 List<Offset> _lineSupercover(Offset start, Offset end) {

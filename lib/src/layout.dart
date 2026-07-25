@@ -1,5 +1,6 @@
 import 'dart:collection';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'compound_graph.dart';
 import 'constraint_handler.dart';
@@ -13,6 +14,10 @@ import 'random.dart';
 import 'spectral.dart';
 
 typedef _TilingPadding = ({double horizontal, double vertical});
+
+/// Fillers for the per-node force tables, overwritten before any read.
+final _noIndices = Int32List(0);
+const _originRect = Rect(0, 0, 0, 0);
 
 /// Immutable output of an fCoSE layout run.
 final class FcoseResult {
@@ -310,16 +315,29 @@ final class FcoseLayout {
   }) {
     final fixed = options.fixedNodes.map((constraint) => constraint.nodeId).toSet();
     final layoutNodes = graph.compounds.layoutOrder;
-    final compoundIds = {
-      for (final node in layoutNodes)
-        if (graph.compounds.isCompound(node.id)) node.id,
-    };
-    final descendantsByNode = {for (final node in layoutNodes) node.id: graph.compounds.descendantLeaves(node.id)};
-    final movementWeights = <String, int>{};
-    for (final node in layoutNodes) {
-      final descendants = descendantsByNode[node.id]!;
-      final fixedDescendantCount = descendants.where(fixed.contains).length;
-      movementWeights[node.id] = fixedDescendantCount == 0 ? descendants.length : fixedDescendantCount * 100;
+    // Force accumulation is indexed by node position in `graph.graph.nodes`, so
+    // no tick performs a string hash for per-node state.
+    final nodes = graph.graph.nodes;
+    final nodeCount = nodes.length;
+    final indexOf = {for (final (index, node) in nodes.indexed) node.id: index};
+    final layoutIndices = Int32List.fromList([for (final node in layoutNodes) indexOf[node.id]!]);
+    final leafIndices = Int32List.fromList([for (final leaf in graph.leaves) indexOf[leaf.id]!]);
+    final rootIndices = Int32List.fromList([for (final node in graph.graph.childrenByParent[null]!) indexOf[node.id]!]);
+    final isCompound = List.filled(nodeCount, false);
+    final isFixed = List.filled(nodeCount, false);
+    final descendantCounts = Int32List(nodeCount);
+    final unfixedDescendants = List<Int32List>.filled(nodeCount, _noIndices);
+    final movementWeights = Int32List(nodeCount);
+    final nodeRepulsions = Float64List(nodeCount);
+    final ownerIds = List<String?>.filled(nodeCount, null);
+    final ownerIndices = Int32List(nodeCount);
+    final gravities = List<({double range, double estimatedSize, double strength})?>.filled(nodeCount, null);
+    for (final (index, node) in nodes.indexed) {
+      isFixed[index] = fixed.contains(node.id);
+      nodeRepulsions[index] = node.nodeRepulsion ?? options.nodeRepulsion;
+      final owner = graph.compounds.ownerOf(node.id);
+      ownerIds[index] = owner;
+      ownerIndices[index] = owner == null ? -1 : indexOf[owner]!;
     }
     final gravityByOwner = <String?, ({double range, double estimatedSize, double strength})>{};
     final processedOwners = <String?>{};
@@ -334,9 +352,36 @@ final class FcoseLayout {
         strength: options.gravity * (owner == null ? 1 : options.compoundGravity),
       );
     }
-    final springs = [for (final edge in graph.edges) _springData(graph, edge)];
-    final forces = {for (final node in graph.graph.nodes) node.id: Offset.zero};
-    final leafDisplacements = {for (final leaf in graph.leaves) leaf.id: Offset.zero};
+    for (final node in layoutNodes) {
+      final index = indexOf[node.id]!;
+      isCompound[index] = graph.compounds.isCompound(node.id);
+      final descendants = graph.compounds.descendantLeaves(node.id);
+      descendantCounts[index] = descendants.length;
+      final fixedDescendantCount = descendants.where(fixed.contains).length;
+      movementWeights[index] = fixedDescendantCount == 0 ? descendants.length : fixedDescendantCount * 100;
+      if (isCompound[index]) {
+        unfixedDescendants[index] = Int32List.fromList([
+          for (final leaf in descendants)
+            if (!fixed.contains(leaf)) indexOf[leaf]!,
+        ]);
+      }
+      gravities[index] = gravityByOwner[node.parentId];
+    }
+    final springs = <({int source, int target, double idealLength, double elasticity})>[];
+    for (final edge in graph.edges) {
+      final spring = _springData(graph, edge);
+      springs.add((
+        source: indexOf[edge.source]!,
+        target: indexOf[edge.target]!,
+        idealLength: spring.idealLength,
+        elasticity: spring.elasticity,
+      ));
+    }
+    final rectangleByIndex = List<Rect>.filled(nodeCount, _originRect);
+    final forceX = Float64List(nodeCount);
+    final forceY = Float64List(nodeCount);
+    final leafDisplacementX = Float64List(nodeCount);
+    final leafDisplacementY = Float64List(nodeCount);
     final ownerBounds = <String?, Rect>{};
     var coolingFactor = fixedCoolingFactor ?? options.initialEnergyOnIncremental;
     var coolingCycle = 0;
@@ -348,7 +393,7 @@ final class FcoseLayout {
     final coolingExponent = maxIterations <= _convergenceCheckPeriod
         ? 0.0
         : math.log(100 * (options.initialEnergyOnIncremental - options.minTemperature)) / math.log(maxCoolingCycle);
-    var repulsionPairs = <(FcoseNode, FcoseNode)>[];
+    var repulsionPairs = <(int, int)>[];
     final averageIdealLength = _averageIdealEdgeLength(graph.edges);
     final totalDisplacementThreshold = 0.03 * averageIdealLength * graph.graph.nodes.length;
     final repulsionRange = 2 * math.max(averageIdealLength, _minimumRepulsionRangeIdealEdgeLength).toDouble();
@@ -399,34 +444,40 @@ final class FcoseLayout {
         }
       }
       final rectangles = graph.compounds.rectangles(positions, padding: options.compoundPadding);
-      for (final node in graph.graph.nodes) {
-        forces[node.id] = Offset.zero;
-      }
-      for (final leaf in graph.leaves) {
-        leafDisplacements[leaf.id] = Offset.zero;
+      for (var index = 0; index < nodeCount; index++) {
+        rectangleByIndex[index] = rectangles[nodes[index].id]!;
+        forceX[index] = 0;
+        forceY[index] = 0;
+        leafDisplacementX[index] = 0;
+        leafDisplacementY[index] = 0;
       }
       ownerBounds.clear();
 
       if (iterationNumber % _repulsionGridRefreshPeriod == 1) {
-        repulsionPairs = _refreshRepulsionPairs(graph, rectangles, repulsionRange);
+        repulsionPairs = _refreshRepulsionPairs(
+          rectangleByIndex,
+          repulsionRange,
+          layoutIndices,
+          rootIndices,
+          ownerIndices,
+        );
       }
       for (final (first, second) in repulsionPairs) {
-        final firstRect = rectangles[first.id]!;
-        final secondRect = rectangles[second.id]!;
-        final firstWeight = descendantsByNode[first.id]!.length;
-        final secondWeight = descendantsByNode[second.id]!.length;
+        final firstRect = rectangleByIndex[first];
+        final secondRect = rectangleByIndex[second];
+        final firstWeight = descendantCounts[first];
+        final secondWeight = descendantCounts[second];
         if (firstRect.overlaps(secondRect)) {
           final childFactor = firstWeight * secondWeight / (firstWeight + secondWeight);
           final separation = firstRect.separationAmountTo(secondRect, buffer: averageIdealLength / 2);
-          final force = separation * (-2 * childFactor);
-          forces[first.id] = forces[first.id]! + force;
-          forces[second.id] = forces[second.id]! - force;
+          final scale = -2 * childFactor;
+          forceX[first] += separation.x * scale;
+          forceY[first] += separation.y * scale;
+          forceX[second] -= separation.x * scale;
+          forceY[second] -= separation.y * scale;
           continue;
         }
-        var delta =
-            options.uniformNodeDimensions &&
-                !graph.compounds.isCompound(first.id) &&
-                !graph.compounds.isCompound(second.id)
+        var delta = options.uniformNodeDimensions && !isCompound[first] && !isCompound[second]
             ? secondRect.center - firstRect.center
             : firstRect.boundaryDisplacementTo(secondRect);
         final minimumComponentDistance = averageIdealLength / 10;
@@ -436,22 +487,21 @@ final class FcoseLayout {
         );
         final boundaryDistance = delta.length;
         if (boundaryDistance == 0) continue;
-        final pairRepulsion =
-            (first.nodeRepulsion ?? options.nodeRepulsion) / 2 + (second.nodeRepulsion ?? options.nodeRepulsion) / 2;
+        final pairRepulsion = nodeRepulsions[first] / 2 + nodeRepulsions[second] / 2;
         final magnitude = pairRepulsion * firstWeight * secondWeight / (boundaryDistance * boundaryDistance);
-        final force = delta.normalized() * magnitude;
-        forces[first.id] = forces[first.id]! - force;
-        forces[second.id] = forces[second.id]! + force;
+        final unitX = delta.x / boundaryDistance;
+        final unitY = delta.y / boundaryDistance;
+        forceX[first] -= unitX * magnitude;
+        forceY[first] -= unitY * magnitude;
+        forceX[second] += unitX * magnitude;
+        forceY[second] += unitY * magnitude;
       }
 
       // Hooke springs act on their real endpoints, including compounds.
-      for (final (:edge, :idealLength, :elasticity) in springs) {
-        final source = edge.source;
-        final target = edge.target;
-        final sourceRect = rectangles[source]!;
-        final targetRect = rectangles[target]!;
-        var delta =
-            options.uniformNodeDimensions && !graph.compounds.isCompound(source) && !graph.compounds.isCompound(target)
+      for (final (:source, :target, :idealLength, :elasticity) in springs) {
+        final sourceRect = rectangleByIndex[source];
+        final targetRect = rectangleByIndex[target];
+        var delta = options.uniformNodeDimensions && !isCompound[source] && !isCompound[target]
             ? targetRect.center - sourceRect.center
             : sourceRect.boundaryDisplacementTo(targetRect);
         if (delta.length < 1e-7) continue;
@@ -459,58 +509,76 @@ final class FcoseLayout {
           delta.x.abs() < _minimumSpringComponentLength ? delta.x.sign : delta.x,
           delta.y.abs() < _minimumSpringComponentLength ? delta.y.sign : delta.y,
         );
-        final magnitude = elasticity * (delta.length - idealLength);
-        final force = delta.normalized() * magnitude;
-        forces[source] = forces[source]! + force;
-        forces[target] = forces[target]! - force;
+        final length = delta.length;
+        final magnitude = elasticity * (length - idealLength);
+        final forceComponentX = delta.x / length * magnitude;
+        final forceComponentY = delta.y / length * magnitude;
+        forceX[source] += forceComponentX;
+        forceY[source] += forceComponentY;
+        forceX[target] -= forceComponentX;
+        forceY[target] -= forceComponentY;
       }
 
-      for (final node in layoutNodes) {
-        if (fixed.contains(node.id)) continue;
-        final position = rectangles[node.id]!.center;
-        final owner = graph.compounds.ownerOf(node.id);
+      for (final index in layoutIndices) {
+        if (isFixed[index]) continue;
+        final nodeRect = rectangleByIndex[index];
+        final position = nodeRect.center;
         var gravityForce = Offset.zero;
-        final gravity = gravityByOwner[owner];
+        final gravity = gravities[index];
         if (gravity != null) {
+          final owner = ownerIds[index];
           final bounds = ownerBounds.putIfAbsent(owner, () => graph.compounds.ownerBounds(owner, rectangles));
           final ownerCenter = bounds.center;
           final distance = position - ownerCenter;
-          final nodeRect = rectangles[node.id]!;
           if (distance.x.abs() + nodeRect.width / 2 > gravity.estimatedSize * gravity.range ||
               distance.y.abs() + nodeRect.height / 2 > gravity.estimatedSize * gravity.range) {
             gravityForce = (ownerCenter - position) * gravity.strength;
           }
         }
-        final descendants = descendantsByNode[node.id]!;
         // cose-base assigns weight 100 to each fixed leaf below a compound so
         // forces on the ancestor only gently move its unfixed descendants.
-        var displacement = (forces[node.id]! + gravityForce) * (coolingFactor / movementWeights[node.id]!);
-        if (!compoundIds.contains(node.id)) {
-          displacement += leafDisplacements[node.id]!;
+        final scale = coolingFactor / movementWeights[index];
+        var displacementX = (forceX[index] + gravityForce.x) * scale;
+        var displacementY = (forceY[index] + gravityForce.y) * scale;
+        if (!isCompound[index]) {
+          displacementX += leafDisplacementX[index];
+          displacementY += leafDisplacementY[index];
         }
         final displacementLimit = coolingFactor * 100;
-        displacement = Offset(
-          displacement.x.clamp(-displacementLimit, displacementLimit),
-          displacement.y.clamp(-displacementLimit, displacementLimit),
-        );
+        displacementX = displacementX.clamp(-displacementLimit, displacementLimit);
+        displacementY = displacementY.clamp(-displacementLimit, displacementLimit);
         // CoSENode visits owner graphs in LGraphManager order. Each compound
         // first contributes to its descendant leaves; when a leaf is reached,
         // its accumulated ancestor and local displacement are clamped together.
-        if (compoundIds.contains(node.id)) {
-          for (final leaf in descendants) {
-            if (!fixed.contains(leaf)) {
-              leafDisplacements[leaf] = leafDisplacements[leaf]! + displacement;
-            }
+        if (isCompound[index]) {
+          for (final leaf in unfixedDescendants[index]) {
+            leafDisplacementX[leaf] += displacementX;
+            leafDisplacementY[leaf] += displacementY;
           }
         } else {
-          leafDisplacements[node.id] = displacement;
+          leafDisplacementX[index] = displacementX;
+          leafDisplacementY[index] = displacementY;
         }
       }
       totalDisplacement = 0;
-      constraintHandler.constrainDisplacements(positions, leafDisplacements, iteration: iterationNumber);
-      for (final entry in leafDisplacements.entries) {
-        positions[entry.key] = positions[entry.key]! + entry.value;
-        totalDisplacement += entry.value.x.abs() + entry.value.y.abs();
+      if (_hasConstraints) {
+        final leafDisplacements = {
+          for (final index in leafIndices) nodes[index].id: Offset(leafDisplacementX[index], leafDisplacementY[index]),
+        };
+        constraintHandler.constrainDisplacements(positions, leafDisplacements, iteration: iterationNumber);
+        for (final entry in leafDisplacements.entries) {
+          positions[entry.key] = positions[entry.key]! + entry.value;
+          totalDisplacement += entry.value.x.abs() + entry.value.y.abs();
+        }
+      } else {
+        for (final index in leafIndices) {
+          final id = nodes[index].id;
+          final displacementX = leafDisplacementX[index];
+          final displacementY = leafDisplacementY[index];
+          final position = positions[id]!;
+          positions[id] = Offset(position.x + displacementX, position.y + displacementY);
+          totalDisplacement += displacementX.abs() + displacementY.abs();
+        }
       }
     }
     return _SpringPhaseResult(
@@ -617,54 +685,66 @@ final class FcoseLayout {
     };
   }
 
-  List<(FcoseNode, FcoseNode)> _refreshRepulsionPairs(
-    _WorkingGraph graph,
-    Map<String, Rect> rectangles,
+  /// Node-index pairs within [repulsionRange] of each other, using layout-base's
+  /// uniform grid. Every table is indexed by node position in the working
+  /// graph's node list.
+  List<(int, int)> _refreshRepulsionPairs(
+    List<Rect> rectangles,
     double repulsionRange,
+    Int32List layoutIndices,
+    Int32List rootIndices,
+    Int32List ownerIndices,
   ) {
-    final nodes = graph.compounds.layoutOrder;
-    final rootNodes = graph.graph.childrenByParent[null]!;
-    var rootBounds = rectangles[rootNodes.first.id]!;
-    for (final node in rootNodes.skip(1)) {
-      rootBounds = rootBounds.union(rectangles[node.id]!);
+    final nodeCount = rectangles.length;
+    var rootBounds = rectangles[rootIndices.first];
+    for (final index in rootIndices.skip(1)) {
+      rootBounds = rootBounds.union(rectangles[index]);
     }
     rootBounds = rootBounds.inflate(_layoutBaseGraphMargin);
     final sizeX = math.max(1, (rootBounds.width / repulsionRange).ceil());
     final sizeY = math.max(1, (rootBounds.height / repulsionRange).ceil());
-    final grid = List.generate(sizeX, (_) => List.generate(sizeY, (_) => <FcoseNode>[]));
-    final coordinates = <String, ({int startX, int finishX, int startY, int finishY})>{};
+    final grid = List.generate(sizeX, (_) => List.generate(sizeY, (_) => <int>[]));
+    final startXs = Int32List(nodeCount);
+    final finishXs = Int32List(nodeCount);
+    final startYs = Int32List(nodeCount);
+    final finishYs = Int32List(nodeCount);
 
-    for (final node in nodes) {
-      final rectangle = rectangles[node.id]!;
+    for (final index in layoutIndices) {
+      final rectangle = rectangles[index];
       final startX = ((rectangle.left - rootBounds.left) / repulsionRange).floor();
       final finishX = ((rectangle.right - rootBounds.left) / repulsionRange).floor();
       final startY = ((rectangle.top - rootBounds.top) / repulsionRange).floor();
       final finishY = ((rectangle.bottom - rootBounds.top) / repulsionRange).floor();
-      coordinates[node.id] = (startX: startX, finishX: finishX, startY: startY, finishY: finishY);
+      startXs[index] = startX;
+      finishXs[index] = finishX;
+      startYs[index] = startY;
+      finishYs[index] = finishY;
       for (var x = startX; x <= finishX; x++) {
         for (var y = startY; y <= finishY; y++) {
-          grid[x][y].add(node);
+          grid[x][y].add(index);
         }
       }
     }
 
-    final processed = <String>{};
-    final pairs = <(FcoseNode, FcoseNode)>[];
-    for (final first in nodes) {
-      final coordinate = coordinates[first.id]!;
-      final surrounding = <String>{};
-      for (var x = coordinate.startX - 1; x < coordinate.finishX + 2; x++) {
-        for (var y = coordinate.startY - 1; y < coordinate.finishY + 2; y++) {
+    final processed = List.filled(nodeCount, false);
+    // Stamped with the outer node's index instead of cleared, which a plain
+    // per-node set would need.
+    final surrounding = Int32List(nodeCount)..fillRange(0, nodeCount, -1);
+    final pairs = <(int, int)>[];
+    for (final first in layoutIndices) {
+      for (var x = startXs[first] - 1; x < finishXs[first] + 2; x++) {
+        for (var y = startYs[first] - 1; y < finishYs[first] + 2; y++) {
           if (x < 0 || y < 0 || x >= sizeX || y >= sizeY) continue;
           for (final second in grid[x][y]) {
-            if (first.id == second.id ||
-                graph.compounds.ownerOf(first.id) != graph.compounds.ownerOf(second.id) ||
-                processed.contains(second.id) ||
-                !surrounding.add(second.id)) {
+            if (first == second ||
+                ownerIndices[first] != ownerIndices[second] ||
+                processed[second] ||
+                surrounding[second] == first) {
               continue;
             }
-            final firstRect = rectangles[first.id]!;
-            final secondRect = rectangles[second.id]!;
+            surrounding[second] = first;
+            final firstRect = rectangles[first];
+            final secondRect = rectangles[second];
             final distanceX =
                 (firstRect.center.x - secondRect.center.x).abs() - (firstRect.width + secondRect.width) / 2;
             final distanceY =
@@ -675,7 +755,7 @@ final class FcoseLayout {
           }
         }
       }
-      processed.add(first.id);
+      processed[first] = true;
     }
     return pairs;
   }

@@ -55,6 +55,26 @@ void main() {
     expect(PackingComponent.combinedBounds(shifted).center, before);
   });
 
+  test('randomized polyomino packing rejects a grid it cannot allocate', () {
+    // Tiny nodes drive the grid step down to one pixel while the grid still
+    // spans twice the summed component extent, so a couple of hundred of them
+    // ask for more cells than any packing they could produce.
+    final components = [
+      for (var index = 0; index < 200; index++) PackingComponent(nodes: [Rect(index * 1000, 0, 1, 1)], edges: const []),
+    ];
+
+    expect(
+      () => const RandomizedComponentPacker().pack(components),
+      throwsA(
+        isA<ArgumentError>().having(
+          (error) => error.message,
+          'message',
+          allOf(contains('grid'), contains('gridSizeFactor')),
+        ),
+      ),
+    );
+  });
+
   test('incremental POSE packing matches layout-utilities 1.1.1', () {
     final components = [
       const PackingComponent(nodes: [Rect(0, 0, 40, 20)], edges: []),

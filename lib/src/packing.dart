@@ -63,6 +63,16 @@ final class RandomizedComponentPacker {
   /// grid becomes and how close the result stays to [desiredAspectRatio].
   static const _weightedUtilityShare = 0.5;
 
+  /// Largest packing grid [pack] will allocate, in cells (one byte each).
+  ///
+  /// layout-utilities sizes the grid at twice the summed extent of every
+  /// component, so its cell count grows with the square of the component count
+  /// and shrinks only with the average node size. Many small components ask for
+  /// a grid far larger than the packing they produce; without this cap that
+  /// request reaches [Uint8List] as a multi-gigabyte allocation and takes the
+  /// process down instead of failing.
+  static const _maximumGridCells = 1 << 28;
+
   const RandomizedComponentPacker({
     this.componentSpacing = 80,
     this.desiredAspectRatio = 1,
@@ -143,6 +153,17 @@ final class RandomizedComponentPacker {
       final sizeOrder = (second.stepWidth * second.stepHeight).compareTo(first.stepWidth * first.stepHeight);
       return sizeOrder == 0 ? first.index.compareTo(second.index) : sizeOrder;
     });
+    final gridColumns = ((2 * gridWidth + gridStep) / gridStep).floorToDouble() + 1;
+    final gridRows = ((2 * gridHeight + gridStep) / gridStep).floorToDouble() + 1;
+    if (gridColumns * gridRows > _maximumGridCells) {
+      throw ArgumentError.value(
+        components,
+        'components',
+        'packing ${components.length} components at a grid step of $gridStep needs a '
+            '${gridColumns.toInt()} by ${gridRows.toInt()} grid, over the $_maximumGridCells-cell limit; '
+            'pack fewer components at a time or raise gridSizeFactor',
+      );
+    }
     final grid = _PackingGrid(2 * gridWidth + gridStep, 2 * gridHeight + gridStep, gridStep);
     grid.place(polyominos.first, grid.centerX, grid.centerY);
     for (final polyomino in polyominos.skip(1)) {

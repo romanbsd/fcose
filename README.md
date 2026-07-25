@@ -6,7 +6,9 @@ A framework-independent, pure Dart port of
 
 The package accepts a typed compound graph and returns deterministic node
 centers and rectangles. It has no Cytoscape.js, browser, Flutter, FFI, or
-JavaScript runtime dependency.
+JavaScript runtime dependency. The Dart implementation is optimized for better
+performance, including compact packing data structures and reduced allocation
+and copying in layout hot paths.
 
 General fCoSE parity is still under development, so this prerelease is not yet
 a universal drop-in replacement for every cytoscape-fcose option and graph
@@ -100,6 +102,8 @@ outputs are captured once per layout run. Explicit values on `FcoseNode` and
 - typed quality, greedy/random sampling, force, geometry, tiling, and
   constraint options;
 - platform-stable seeded execution on the Dart VM and dart2js.
+- performance-oriented hot-path and packing implementations that reduce
+  temporary allocations, redundant copying, and grid-storage overhead.
 
 ## Remaining parity work
 

@@ -1,11 +1,16 @@
 name: fcose
 description: A pure Dart port of the fCoSE compound graph layout algorithm.
 version: 0.1.0-dev.1
+repository: https://github.com/romanbsd/fcose
+issue_tracker: https://github.com/romanbsd/fcose/issues
+topics:
+  - graph
+  - layout
+  - visualization
 
 environment:
   sdk: ^3.12.2
 
-# Add regular dependencies here.
 dependencies:
 
 dev_dependencies:

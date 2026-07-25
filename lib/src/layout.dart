@@ -106,17 +106,24 @@ final class FcoseLayout {
     if (runsSpringEmbedder) {
       iterations = _runSpringEmbedder(working, positions, constraintHandler, random);
     }
-    if (!_hasConstraints && tiling == null) {
-      if (options.packComponents && working.packingComponents.length > 1) {
+    // Upstream relocates the result back to the center it held before the run,
+    // whatever the step or quality; only fixed nodes, whose absolute coordinates
+    // are the point of the constraint, suppress it. Packing is what splits the
+    // graph into connected components, so it decides what "the result" means:
+    // with packing each component returns to its own center, without it the
+    // whole graph moves as one.
+    if (tiling == null && options.fixedNodes.isEmpty) {
+      if (_packingEnabled) {
         _relocateComponentsToOriginalCenters(working, positions, originalComponentCenters);
+      } else {
+        final relocation = originalBoundsCenter - _graphBounds(working, positions).center;
+        for (final leaf in working.leaves) {
+          positions[leaf.id] = positions[leaf.id]! + relocation;
+        }
       }
-      _packComponents(working, positions);
     }
-    if (options.step == LayoutStep.transformed && _hasConstraints && options.fixedNodes.isEmpty) {
-      final relocation = originalBoundsCenter - _graphBounds(working, positions).center;
-      for (final leaf in working.leaves) {
-        positions[leaf.id] = positions[leaf.id]! + relocation;
-      }
+    if (_packingEnabled && tiling == null) {
+      _packComponents(working, positions);
     }
 
     final rectangles = _paddedRectangles(working.compounds, positions);
@@ -1265,6 +1272,10 @@ final class FcoseLayout {
     };
     return defaultEdgeLength + endpointSize / 2;
   }
+
+  /// Whether upstream would hand the graph to layout-utilities. Constraints turn
+  /// packing off, and with it the split into per-component layouts.
+  bool get _packingEnabled => options.packComponents && !_hasConstraints;
 
   bool get _hasConstraints =>
       options.fixedNodes.isNotEmpty ||

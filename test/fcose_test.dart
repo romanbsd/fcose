@@ -716,12 +716,12 @@ void main() {
       expect(result.iterations, 15);
       // Repeated JS and Dart floating-point evaluation differs slightly after
       // fourteen nonlinear spring ticks; the completed geometry stays sub-pixel.
-      expect(result.positionOf('a').x, closeTo(99.42754483305276, 0.1));
-      expect(result.positionOf('a').y, closeTo(71.29156688814719, 0.1));
+      expect(result.positionOf('a').x, closeTo(99.42754483305279, 0.1));
+      expect(result.positionOf('a').y, closeTo(81.93735033222076, 0.1));
       expect(result.positionOf('b').x, closeTo(300.5724551669472, 0.1));
-      expect(result.positionOf('b').y, closeTo(71.29156688814717, 0.1));
-      expect(result.positionOf('c').x, closeTo(200, 0.1));
-      expect(result.positionOf('c').y, closeTo(257.41686622370565, 0.1));
+      expect(result.positionOf('b').y, closeTo(81.93735033222075, 0.1));
+      expect(result.positionOf('c').x, closeTo(200.00000000000003, 0.1));
+      expect(result.positionOf('c').y, closeTo(268.0626496677792, 0.1));
     });
 
     test('matches the upstream overlap-separation force branch', () {
@@ -754,12 +754,12 @@ void main() {
           );
 
       expect(result.iterations, 15);
-      expect(result.positionOf('a').x, closeTo(-1.7449812875310613, 1e-9));
-      expect(result.positionOf('a').y, closeTo(63.13372421802022, 1e-9));
-      expect(result.positionOf('b').x, closeTo(182.3138206405454, 1e-9));
-      expect(result.positionOf('b').y, closeTo(84.30974146150082, 1e-9));
-      expect(result.positionOf('c').x, closeTo(138.46636658037528, 1e-9));
-      expect(result.positionOf('c').y, closeTo(262.556534320479, 1e-9));
+      expect(result.positionOf('a').x, closeTo(32.97059903596177, 1e-9));
+      expect(result.positionOf('a').y, closeTo(75.28859494877061, 1e-9));
+      expect(result.positionOf('b').x, closeTo(217.02940096403825, 1e-9));
+      expect(result.positionOf('b').y, closeTo(96.46461219225121, 1e-9));
+      expect(result.positionOf('c').x, closeTo(173.1819469038681, 1e-9));
+      expect(result.positionOf('c').y, closeTo(274.71140505122935, 1e-9));
     });
 
     test('matches upstream repulsion range when ideal edges are shorter than ten pixels', () {
@@ -794,12 +794,12 @@ void main() {
           );
 
       expect(result.iterations, 15);
-      expect(result.positionOf('a').x, closeTo(1.1449371576834397, 1e-9));
-      expect(result.positionOf('a').y, closeTo(0.7837450070064254, 1e-9));
-      expect(result.positionOf('b').x, closeTo(9.050855058812843, 1e-9));
-      expect(result.positionOf('b').y, closeTo(0.7609344581942674, 1e-9));
-      expect(result.positionOf('c').x, closeTo(5.804207783503714, 1e-9));
-      expect(result.positionOf('c').y, closeTo(8.455320534799307, 1e-9));
+      expect(result.positionOf('a').x, closeTo(1.0470410494352982, 1e-9));
+      expect(result.positionOf('a').y, closeTo(1.175617510509638, 1e-9));
+      expect(result.positionOf('b').x, closeTo(8.952958950564701, 1e-9));
+      expect(result.positionOf('b').y, closeTo(1.15280696169748, 1e-9));
+      expect(result.positionOf('c').x, closeTo(5.706311675255573, 1e-9));
+      expect(result.positionOf('c').y, closeTo(8.847193038302521, 1e-9));
     });
 
     test('matches upstream per-node repulsion averaging', () {
@@ -830,12 +830,12 @@ void main() {
           );
 
       expect(result.iterations, 15);
-      expect(result.positionOf('a').x, closeTo(49.420136929912445, 1e-9));
-      expect(result.positionOf('a').y, closeTo(49.771008899324826, 1e-9));
-      expect(result.positionOf('b').x, closeTo(350.79771567254494, 1e-9));
-      expect(result.positionOf('b').y, closeTo(49.36502226812051, 1e-9));
-      expect(result.positionOf('c').x, closeTo(199.78214739754267, 1e-9));
-      expect(result.positionOf('c').y, closeTo(300.8639688325547, 1e-9));
+      expect(result.positionOf('a').x, closeTo(49.31121062868377, 1e-9));
+      expect(result.positionOf('a').y, closeTo(49.65651334898722, 1e-9));
+      expect(result.positionOf('b').x, closeTo(350.68878937131626, 1e-9));
+      expect(result.positionOf('b').y, closeTo(49.250526717782904, 1e-9));
+      expect(result.positionOf('c').x, closeTo(199.673221096314, 1e-9));
+      expect(result.positionOf('c').y, closeTo(300.7494732822171, 1e-9));
     });
 
     test('resolves upstream per-element force callbacks once per layout run', () {
@@ -887,12 +887,12 @@ void main() {
       expect(nodeCalls, ['a', 'b', 'c']);
       expect(idealLengthCalls, ['ab', 'bc', 'ca']);
       expect(elasticityCalls, ['ab', 'bc', 'ca']);
-      expect(result.positionOf('a').x, closeTo(49.420136929912445, 1e-9));
-      expect(result.positionOf('a').y, closeTo(49.771008899324826, 1e-9));
-      expect(result.positionOf('b').x, closeTo(350.79771567254494, 1e-9));
-      expect(result.positionOf('b').y, closeTo(49.36502226812051, 1e-9));
-      expect(result.positionOf('c').x, closeTo(199.78214739754267, 1e-9));
-      expect(result.positionOf('c').y, closeTo(300.8639688325547, 1e-9));
+      expect(result.positionOf('a').x, closeTo(49.31121062868377, 1e-9));
+      expect(result.positionOf('a').y, closeTo(49.65651334898722, 1e-9));
+      expect(result.positionOf('b').x, closeTo(350.68878937131626, 1e-9));
+      expect(result.positionOf('b').y, closeTo(49.250526717782904, 1e-9));
+      expect(result.positionOf('c').x, closeTo(199.673221096314, 1e-9));
+      expect(result.positionOf('c').y, closeTo(300.7494732822171, 1e-9));
     });
 
     test('matches upstream tree reduction, regrowth, and post-growth cooling', () {
@@ -930,19 +930,19 @@ void main() {
           );
 
       expect(result.iterations, 40);
-      // Direct cose-base output before cytoscape-fcose's renderer relocation.
       // Repeated nonlinear ticks differ slightly between JavaScript and Dart,
-      // but every completed center remains within a third of a logical pixel.
-      expect(result.positionOf('a').x, closeTo(-22.580760794102254, 0.3));
-      expect(result.positionOf('a').y, closeTo(1.1982125902694278, 0.3));
-      expect(result.positionOf('b').x, closeTo(158.4767465117048, 0.3));
-      expect(result.positionOf('b').y, closeTo(-6.613846539817089, 0.3));
-      expect(result.positionOf('c').x, closeTo(96.26520854371415, 0.3));
-      expect(result.positionOf('c').y, closeTo(185.7875863654262, 0.3));
-      expect(result.positionOf('d').x, closeTo(323.0063977757626, 0.3));
-      expect(result.positionOf('d').y, closeTo(-1.3153448560261296, 0.3));
-      expect(result.positionOf('e').x, closeTo(487.40026951310483, 0.3));
-      expect(result.positionOf('e').y, closeTo(-3.9655620530495312, 0.3));
+      // and the closing relocation adds the drift of the two extreme nodes to
+      // every center, so half a logical pixel is the tightest honest bound.
+      expect(result.positionOf('a').x, closeTo(-54.990515153603525, 0.5));
+      expect(result.positionOf('a').y, closeTo(1.6113426774648687, 0.5));
+      expect(result.positionOf('b').x, closeTo(126.06699215220351, 0.5));
+      expect(result.positionOf('b').y, closeTo(-6.2007164526216485, 0.5));
+      expect(result.positionOf('c').x, closeTo(63.855454184212874, 0.5));
+      expect(result.positionOf('c').y, closeTo(186.20071645262163, 0.5));
+      expect(result.positionOf('d').x, closeTo(290.5966434162613, 0.5));
+      expect(result.positionOf('d').y, closeTo(-0.9022147688306887, 0.5));
+      expect(result.positionOf('e').x, closeTo(454.99051515360355, 0.5));
+      expect(result.positionOf('e').y, closeTo(-3.5524319658540904, 0.5));
     });
 
     test('runs upstream post-growth cooling until the regrown tree converges', () {
@@ -980,8 +980,8 @@ void main() {
           );
 
       expect(result.iterations, 41);
-      expect(result.positionOf('d').x, closeTo(1006.6076986228201, 0.5));
-      expect(result.positionOf('e').x, closeTo(1685.3713349584318, 0.5));
+      expect(result.positionOf('d').x, closeTo(1103.444519478348, 0.5));
+      expect(result.positionOf('e').x, closeTo(1782.2081558139598, 0.5));
     });
 
     test('default quality uses cytoscape-fcose fast cooling', () {
@@ -1004,12 +1004,12 @@ void main() {
           );
 
       expect(result.iterations, 202);
-      expect(result.positionOf('a').x, closeTo(341.99761397724626, 1e-9));
-      expect(result.positionOf('a').y, closeTo(262.76796095323914, 1e-9));
-      expect(result.positionOf('b').x, closeTo(582.7293147521211, 1e-9));
-      expect(result.positionOf('b').y, closeTo(262.7667011210557, 1e-9));
-      expect(result.positionOf('c').x, closeTo(375.27307127063233, 1e-9));
-      expect(result.positionOf('c').y, closeTo(474.4653379257053, 1e-9));
+      expect(result.positionOf('a').x, closeTo(429.63414961256257, 1e-9));
+      expect(result.positionOf('a').y, closeTo(369.15194142985865, 1e-9));
+      expect(result.positionOf('b').x, closeTo(670.3658503874374, 1e-9));
+      expect(result.positionOf('b').y, closeTo(369.1506815976752, 1e-9));
+      expect(result.positionOf('c').x, closeTo(462.90960690594864, 1e-9));
+      expect(result.positionOf('c').y, closeTo(580.8493184023248, 1e-9));
     });
 
     test('packs disconnected components without overlap', () {
@@ -1847,7 +1847,7 @@ void main() {
       expect(result.positionOf('free').y, closeTo(50, 1e-9));
     });
 
-    test('does not apply transformed-stage recentering to the full layout', () {
+    test('recenters a constrained layout on its original bounding box', () {
       final result =
           FcoseLayout(
             options: const FcoseOptions(
@@ -1874,9 +1874,12 @@ void main() {
             ),
           );
 
-      expect(result.positionOf('a').x, 50);
-      expect(result.positionOf('b').x, 50);
-      expect(result.positionOf('free').x, 100);
+      // Alignment pulls a and b onto a shared x of 50 and leaves free at 100,
+      // so the result sits 25 to the right of where it started; constraints
+      // disable packing, which makes the whole graph one component to move back.
+      expect(result.positionOf('a').x, 25);
+      expect(result.positionOf('b').x, 25);
+      expect(result.positionOf('free').x, 75);
     });
 
     test('exposes the enforced constraint-debug stage without refinement', () {
@@ -2021,13 +2024,13 @@ void main() {
       expect(result.rectOf('parent').containsRect(result.rectOf('a')), isTrue);
       expect(result.rectOf('parent').containsRect(result.rectOf('d')), isTrue);
       expect(result.positionOf('a').x, closeTo(74.99949050629539, 1e-3));
-      expect(result.positionOf('a').y, closeTo(-3.6617906982385136, 1e-3));
+      expect(result.positionOf('a').y, closeTo(-5.492686047356991, 1e-3));
       expect(result.positionOf('b').x, closeTo(149.99898099979958, 1e-3));
-      expect(result.positionOf('b').y, closeTo(7.323581134492621, 1e-3));
+      expect(result.positionOf('b').y, closeTo(5.492685785374174, 1e-3));
       expect(result.positionOf('c').x, closeTo(-74.99949049989979, 1e-3));
-      expect(result.positionOf('c').y, closeTo(-3.661790567246443, 1e-3));
+      expect(result.positionOf('c').y, closeTo(-5.492685916365584, 1e-3));
       expect(result.positionOf('d').x, closeTo(-149.99898101259078, 1e-3));
-      expect(result.positionOf('d').y, closeTo(7.323581396477027, 1e-3));
+      expect(result.positionOf('d').y, closeTo(5.492686047356986, 1e-3));
     });
 
     test('uses one root spectral graph for disconnected top-level components', () {
@@ -2068,11 +2071,11 @@ void main() {
         ),
       );
 
-      expect(result.positionOf('busy').x, closeTo(149.99898100220673, 1e-3));
+      expect(result.positionOf('busy').x, closeTo(144.99898100619518, 1e-3));
       expect(result.positionOf('busy').y.abs(), closeTo(7.323581183794171, 1e-3));
-      expect(result.positionOf('quiet').x, closeTo(3.988496461483881e-9, 1e-3));
+      expect(result.positionOf('quiet').x, closeTo(-4.99999999202292, 1e-3));
       expect(result.positionOf('quiet').y.abs(), closeTo(7.323581265484937, 1e-3));
-      expect(result.positionOf('standalone').x, closeTo(-149.99898101018374, 1e-3));
+      expect(result.positionOf('standalone').x, closeTo(-154.99898100619515, 1e-3));
       expect(result.positionOf('standalone').y.abs(), closeTo(7.323581347175437, 1e-3));
       expect(result.rectOf('left').containsRect(result.rectOf('busy')), isTrue);
       expect(result.rectOf('outer').containsRect(result.rectOf('standalone')), isTrue);

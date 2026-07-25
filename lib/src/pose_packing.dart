@@ -231,7 +231,14 @@ bool _circumcircleContains(({int first, int second, int third}) triangle, int po
   for (final (index, point) in difference.points.indexed) {
     final shortest = _shortestPointOnSegment(point, difference.points[(index + 1) % difference.points.length]);
     final squaredDistance = shortest.x * shortest.x + shortest.y * shortest.y;
-    final unitVector = Offset(-shortest.x, -shortest.y) / math.sqrt(squaredDistance);
+    // The origin lies on this edge of the Minkowski difference, so the two
+    // components touch exactly and the separating direction is undefined.
+    // convex-polygon-distance.ts divides by zero here and returns NaN, which
+    // would poison every subsequent position; a zero vector yields the zero
+    // force that a zero distance implies.
+    final unitVector = squaredDistance == 0
+        ? Offset.zero
+        : Offset(-shortest.x, -shortest.y) / math.sqrt(squaredDistance);
     final candidate = (squaredDistance: squaredDistance, unitVector: unitVector);
     if (index == 0 || candidate.squaredDistance < closest.squaredDistance) closest = candidate;
   }

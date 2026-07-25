@@ -22,6 +22,24 @@ void main() {
     expect(shifts, const [Offset(56, 263), Offset(-244, -153), Offset(264, 105)]);
   });
 
+  test('randomized polyomino packing matches layout-utilities 1.1.1 weighted utility', () {
+    final components = [
+      const PackingComponent(
+        nodes: [Rect(0, 0, 30, 30), Rect(100, 0, 30, 30)],
+        edges: [(start: Offset(15, 15), end: Offset(115, 15))],
+      ),
+      const PackingComponent(
+        nodes: [Rect(300, 200, 60, 20), Rect(320, 280, 20, 60)],
+        edges: [(start: Offset(330, 210), end: Offset(330, 310))],
+      ),
+      const PackingComponent(nodes: [Rect(-100, 50, 40, 40)], edges: []),
+    ];
+
+    final shifts = const RandomizedComponentPacker(utility: PackingUtility.weighted).pack(components);
+
+    expect(shifts, const [Offset(10, 46), Offset(-110, -46), Offset(110, 104)]);
+  });
+
   test('randomized polyomino packing preserves the combined bounding-box center', () {
     final components = [
       const PackingComponent(nodes: [Rect(-250, -30, 80, 20)], edges: []),
@@ -119,6 +137,22 @@ void main() {
     ];
     for (var index = 0; index < shifts.length; index++) {
       _expectOffsetClose(shifts[index], expected[index], tolerance: 1e-9);
+    }
+  });
+
+  test('incremental POSE packing keeps shifts finite for exactly touching components', () {
+    // The Minkowski difference has the origin on one of its edges, so the
+    // separating direction is undefined and convex-polygon-distance.ts would
+    // divide by zero.
+    final shifts = const IncrementalComponentPacker(componentSpacing: 50).pack([
+      const PackingComponent(nodes: [Rect(0, 0, 20, 20)], edges: []),
+      const PackingComponent(nodes: [Rect(20, 0, 20, 20)], edges: []),
+      const PackingComponent(nodes: [Rect(40, 0, 20, 20)], edges: []),
+    ]);
+
+    for (final shift in shifts) {
+      expect(shift.x.isFinite, isTrue);
+      expect(shift.y.isFinite, isTrue);
     }
   });
 

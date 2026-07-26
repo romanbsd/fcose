@@ -218,7 +218,22 @@ void main() {
       tile: false,
       packComponents: false,
     );
-    final unpacked = FcoseLayout(options: baseOptions).run(graph);
+    // Packing sends every component through its own spectral pass, so the
+    // baseline is one unpacked run per component rather than one for the graph.
+    final componentIds = [
+      ['a', 'b'],
+      ['c', 'd'],
+      ['e'],
+    ];
+    final unpacked = [
+      for (final ids in componentIds)
+        FcoseLayout(options: baseOptions).run(
+          FcoseGraph(
+            nodes: [for (final id in ids) graph.nodeById[id]!],
+            edges: graph.edges.where((edge) => ids.contains(edge.source) && ids.contains(edge.target)),
+          ),
+        ),
+    ];
     final originalComponents = [
       const PackingComponent(nodes: [Rect(-215, -110, 30, 20), Rect(-125, -115, 50, 30)], edges: []),
       const PackingComponent(nodes: [Rect(280, 170, 40, 60), Rect(285, 285, 30, 30)], edges: []),
@@ -226,22 +241,22 @@ void main() {
     ];
     final relocated = <PackingComponent>[];
     final relocations = <Offset>[];
-    for (final (index, ids) in [
-      ['a', 'b'],
-      ['c', 'd'],
-      ['e'],
-    ].indexed) {
-      final bounds = ids.skip(1).fold(unpacked.rectOf(ids.first), (value, id) => value.union(unpacked.rectOf(id)));
+    for (final (index, ids) in componentIds.indexed) {
+      final component = unpacked[index];
+      final bounds = ids.skip(1).fold(component.rectOf(ids.first), (value, id) => value.union(component.rectOf(id)));
       final relocation = PackingComponent.combinedBounds([originalComponents[index]]).center - bounds.center;
       relocations.add(relocation);
       relocated.add(
         PackingComponent(
-          nodes: [for (final id in ids) unpacked.rectOf(id).shift(relocation)],
-          edges: switch (ids) {
-            ['a', 'b'] => [(start: unpacked.positionOf('a') + relocation, end: unpacked.positionOf('b') + relocation)],
-            ['c', 'd'] => [(start: unpacked.positionOf('c') + relocation, end: unpacked.positionOf('d') + relocation)],
-            _ => const [],
-          },
+          nodes: [for (final id in ids) component.rectOf(id).shift(relocation)],
+          edges: [
+            for (final edge in graph.edges)
+              if (ids.contains(edge.source) && ids.contains(edge.target))
+                (
+                  start: component.positionOf(edge.source) + relocation,
+                  end: component.positionOf(edge.target) + relocation,
+                ),
+          ],
         ),
       );
     }
@@ -257,13 +272,11 @@ void main() {
       ),
     ).run(graph);
 
-    for (final id in ['a', 'b']) {
-      _expectOffsetClose(packed.positionOf(id), unpacked.positionOf(id) + relocations[0] + shifts[0]);
+    for (final (index, ids) in componentIds.indexed) {
+      for (final id in ids) {
+        _expectOffsetClose(packed.positionOf(id), unpacked[index].positionOf(id) + relocations[index] + shifts[index]);
+      }
     }
-    for (final id in ['c', 'd']) {
-      _expectOffsetClose(packed.positionOf(id), unpacked.positionOf(id) + relocations[1] + shifts[1]);
-    }
-    _expectOffsetClose(packed.positionOf('e'), unpacked.positionOf('e') + relocations[2] + shifts[2]);
   });
 }
 

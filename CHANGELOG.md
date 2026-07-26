@@ -45,3 +45,6 @@
   of keeping the coordinates the spring embedder left it with.
 - Treat the components without an edge as the single tiled pseudo-component
   upstream packs, appended after the components that kept their edges.
+- Run one spectral pass and one spring embedder per connected component when
+  packing is enabled, in upstream's order, so a component is no longer embedded
+  alongside the components it is only packed beside.

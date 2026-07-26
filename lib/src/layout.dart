@@ -63,14 +63,20 @@ final class FcoseLayout {
     }
 
     final random = Xorshift32(options.seed);
-    var working = _WorkingGraph(resolvedGraph);
+    final working = _WorkingGraph(resolvedGraph);
     final defaultEdgeLength = _averageIdealEdgeLength(working.edges);
     _validateConstraints(resolvedGraph, defaultEdgeLength);
     final originalGeometry = {for (final leaf in working.leaves) leaf.id: leaf.position ?? Offset.zero};
     final packingPartition = _packingPartition(working);
     final originalComponentCenters = _componentCenters(working, originalGeometry, packingPartition);
     final originalBoundsCenter = _graphBounds(working, originalGeometry).center;
-    var positions = _initialPositions(working, random);
+    // With packing on, upstream never sees the whole graph at once: it splits the
+    // graph into connected components and sends each one through its own spectral
+    // pass, so a component is embedded without the dummy nodes that would
+    // otherwise tie it to the components it is packed beside.
+    var positions = _packingEnabled
+        ? _componentSpectralPositions(resolvedGraph, working.packingComponents, random)
+        : _initialPositions(working, random);
     final constraintHandler = _constraintHandler(resolvedGraph, defaultEdgeLength);
     final runsCosePipeline = options.quality != LayoutQuality.draft;
     final transformsConstraints =
@@ -97,22 +103,35 @@ final class FcoseLayout {
       );
     }
 
-    final tiling = _prepareTiling(resolvedGraph, positions, tilingPadding);
-    if (tiling != null) {
-      working = _WorkingGraph(tiling.graph);
-      positions = tiling.positions;
-    }
-
     var iterations = 0;
-    if (runsSpringEmbedder) {
-      iterations = _runSpringEmbedder(working, positions, constraintHandler, random);
-    }
-    // cose-base gives the tiled members their coordinates back before
-    // `runLayout` returns, so everything below sees untiled geometry: the
-    // proxies and the dummy compounds live no longer than the spring embedder.
-    if (tiling != null) {
-      positions = _untiledPositions(resolvedGraph, tiling, positions, _paddedRectangles(working.compounds, positions));
-      working = _WorkingGraph(resolvedGraph);
+    if (_packingEnabled) {
+      // Each component gets its own cose-base run, in the order packing sees
+      // them: the components that kept their edges first, the tiled block last.
+      final componentPositions = <String, Offset>{};
+      for (final component in packingPartition) {
+        final result = _layoutComponent(
+          _componentGraph(resolvedGraph, component),
+          {for (final id in component.leaves) id: positions[id]!},
+          tilingPadding,
+          constraintHandler,
+          random,
+          runsSpringEmbedder: runsSpringEmbedder,
+        );
+        componentPositions.addAll(result.positions);
+        iterations = math.max(iterations, result.iterations);
+      }
+      positions = componentPositions;
+    } else {
+      final result = _layoutComponent(
+        resolvedGraph,
+        positions,
+        tilingPadding,
+        constraintHandler,
+        random,
+        runsSpringEmbedder: runsSpringEmbedder,
+      );
+      positions = result.positions;
+      iterations = result.iterations;
     }
     // Upstream relocates the result back to the center it held before the run,
     // whatever the step or quality; only fixed nodes, whose absolute coordinates
@@ -234,6 +253,64 @@ final class FcoseLayout {
             )
             .positions;
     return {for (final leaf in graph.leaves) leaf.id: transformed[leaf.id]!};
+  }
+
+  /// The spectral phase run once per connected component.
+  ///
+  /// The components share the layout's random stream and are embedded in the
+  /// order they were found, which is the order upstream walks them in, so a
+  /// component draws the same samples and eigenvector guesses it would there.
+  Map<String, Offset> _componentSpectralPositions(
+    FcoseGraph graph,
+    List<_PackingComponent> components,
+    Xorshift32 random,
+  ) {
+    final positions = <String, Offset>{};
+    for (final component in components) {
+      positions.addAll(_initialPositions(_WorkingGraph(_componentGraph(graph, component)), random));
+    }
+    return positions;
+  }
+
+  /// [component] as a graph of its own, the way upstream narrows `options.eles`
+  /// to one component before handing it to the spectral and CoSE phases.
+  FcoseGraph _componentGraph(FcoseGraph graph, _PackingComponent component) {
+    final memberIds = component.nodes.toSet();
+    return FcoseGraph(
+      nodes: [for (final id in component.nodes) graph.nodeById[id]!],
+      edges: graph.edges.where((edge) => memberIds.contains(edge.source) && memberIds.contains(edge.target)),
+    );
+  }
+
+  /// One cose-base run: tile what can be tiled, refine, then hand the tiled
+  /// members their own coordinates back.
+  ///
+  /// cose-base repopulates them before `runLayout` returns, so the proxies and
+  /// the dummy compounds live no longer than the spring embedder and every later
+  /// phase — relocation, packing — sees untiled geometry.
+  ({Map<String, Offset> positions, int iterations}) _layoutComponent(
+    FcoseGraph graph,
+    Map<String, Offset> initialPositions,
+    _TilingPadding tilingPadding,
+    ConstraintHandler constraintHandler,
+    Xorshift32 random, {
+    required bool runsSpringEmbedder,
+  }) {
+    var working = _WorkingGraph(graph);
+    var positions = initialPositions;
+    final tiling = _prepareTiling(graph, positions, tilingPadding);
+    if (tiling != null) {
+      working = _WorkingGraph(tiling.graph);
+      positions = tiling.positions;
+    }
+    var iterations = 0;
+    if (runsSpringEmbedder) {
+      iterations = _runSpringEmbedder(working, positions, constraintHandler, random);
+    }
+    if (tiling != null) {
+      positions = _untiledPositions(graph, tiling, positions, _paddedRectangles(working.compounds, positions));
+    }
+    return (positions: positions, iterations: iterations);
   }
 
   ({FcoseEdge edge, double idealLength, double elasticity}) _springData(_WorkingGraph graph, FcoseEdge edge) {

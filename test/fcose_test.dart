@@ -1311,24 +1311,24 @@ void main() {
             ),
           );
 
-      // Upstream lays the triangle out on its own, without the tiled block in
-      // the same force simulation, so its coordinates are still about 24px away
-      // from these: `a` [85.3021685902211, -43.94838218086505], `b`
-      // [287.9585905117531, -43.972205200879216], `e` [186.63316539046826,
-      // 141.411953100745], `c` [12.04140948824692, 301.2801260500671], `d`
-      // [102.04140948824693, 301.2801260500671]. Running the triangle alone
-      // through this port reproduces upstream's shape for it to 0.03px, so what
-      // is left is the one spring embedder per graph rather than per component.
-      expect(result.positionOf('a').x, closeTo(75.88105701923294, 1e-9));
-      expect(result.positionOf('a').y, closeTo(-32.24735288695663, 1e-9));
-      expect(result.positionOf('b').x, closeTo(277.6806725374342, 1e-9));
-      expect(result.positionOf('b').y, closeTo(-47.072726774578456, 1e-9));
-      expect(result.positionOf('e').x, closeTo(210.66562099630278, 1e-9));
-      expect(result.positionOf('e').y, closeTo(143.7789204667999, 1e-9));
-      expect(result.positionOf('c').x, closeTo(22.31932746256588, 1e-9));
-      expect(result.positionOf('c').y, closeTo(301.6469031538893, 1e-9));
-      expect(result.positionOf('d').x, closeTo(112.31932746256588, 1e-9));
-      expect(result.positionOf('d').y, closeTo(301.6469031538893, 1e-9));
+      // Both components now hold upstream's shape to 0.09px, and what is left is
+      // a rigid 7.07px shift of each of them: upstream ends at `a`
+      // [85.3021685902211, -43.94838218086505], `b` [287.9585905117531,
+      // -43.972205200879216], `e` [186.63316539046826, 141.411953100745], `c`
+      // [12.04140948824692, 301.2801260500671], `d` [102.04140948824693,
+      // 301.2801260500671]. The triangle and the tiled block overlap when POSE
+      // starts packing them, and the port takes that intersection branch on a
+      // different iteration than the turf-based test upstream uses.
+      expect(result.positionOf('a').x, closeTo(78.23731513311134, 1e-9));
+      expect(result.positionOf('a').y, closeTo(-44.03862974306806, 1e-9));
+      expect(result.positionOf('b').x, closeTo(280.89194529243235, 1e-9));
+      expect(result.positionOf('b').y, closeTo(-44.0146378897777, 1e-9));
+      expect(result.positionOf('e').x, closeTo(179.5601751435174, 1e-9));
+      expect(result.positionOf('e').y, closeTo(141.34616807344128, 1e-9));
+      expect(result.positionOf('c').x, closeTo(19.108054707567696, 1e-9));
+      expect(result.positionOf('c').y, closeTo(301.34623083481347, 1e-9));
+      expect(result.positionOf('d').x, closeTo(109.1080547075677, 1e-9));
+      expect(result.positionOf('d').y, closeTo(301.34623083481347, 1e-9));
     });
 
     test('tiles a disconnected compound subtree bottom-up before force refinement', () {
@@ -2047,20 +2047,26 @@ void main() {
     });
 
     test('uses one root spectral graph for disconnected top-level components', () {
-      final result = FcoseLayout(options: const FcoseOptions(quality: LayoutQuality.draft, seed: 7, tile: false)).run(
-        FcoseGraph(
-          nodes: const [
-            FcoseNode(id: 'a'),
-            FcoseNode(id: 'b'),
-            FcoseNode(id: 'c'),
-            FcoseNode(id: 'd'),
-          ],
-          edges: const [
-            FcoseEdge(id: 'ab', source: 'a', target: 'b'),
-            FcoseEdge(id: 'cd', source: 'c', target: 'd'),
-          ],
-        ),
-      );
+      // Packing is what makes upstream embed one component at a time; with it
+      // off, both components share a single spectral graph tied together by root
+      // dummy nodes, which is the path this case covers.
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(quality: LayoutQuality.draft, seed: 7, tile: false, packComponents: false),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a'),
+                FcoseNode(id: 'b'),
+                FcoseNode(id: 'c'),
+                FcoseNode(id: 'd'),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'cd', source: 'c', target: 'd'),
+              ],
+            ),
+          );
 
       // Port values. Upstream cannot produce any for this graph: its default
       // ideal edge length is a function, and the two-node shortcut of

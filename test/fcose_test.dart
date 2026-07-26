@@ -1311,16 +1311,24 @@ void main() {
             ),
           );
 
-      expect(result.positionOf('a').x, closeTo(67.01003008210519, 1e-9));
-      expect(result.positionOf('a').y, closeTo(20.887744650386477, 1e-9));
-      expect(result.positionOf('b').x, closeTo(268.80964560030645, 1e-9));
-      expect(result.positionOf('b').y, closeTo(6.062370762764665, 1e-9));
-      expect(result.positionOf('e').x, closeTo(201.79459405917498, 1e-9));
-      expect(result.positionOf('e').y, closeTo(196.914018004143, 1e-9));
-      expect(result.positionOf('c').x, closeTo(31.190354399693568, 1e-9));
-      expect(result.positionOf('c').y, closeTo(293.93762923723534, 1e-9));
-      expect(result.positionOf('d').x, closeTo(121.19035439969358, 1e-9));
-      expect(result.positionOf('d').y, closeTo(293.93762923723534, 1e-9));
+      // Upstream lays the triangle out on its own, without the tiled block in
+      // the same force simulation, so its coordinates are still about 24px away
+      // from these: `a` [85.3021685902211, -43.94838218086505], `b`
+      // [287.9585905117531, -43.972205200879216], `e` [186.63316539046826,
+      // 141.411953100745], `c` [12.04140948824692, 301.2801260500671], `d`
+      // [102.04140948824693, 301.2801260500671]. Running the triangle alone
+      // through this port reproduces upstream's shape for it to 0.03px, so what
+      // is left is the one spring embedder per graph rather than per component.
+      expect(result.positionOf('a').x, closeTo(75.88105701923294, 1e-9));
+      expect(result.positionOf('a').y, closeTo(-32.24735288695663, 1e-9));
+      expect(result.positionOf('b').x, closeTo(277.6806725374342, 1e-9));
+      expect(result.positionOf('b').y, closeTo(-47.072726774578456, 1e-9));
+      expect(result.positionOf('e').x, closeTo(210.66562099630278, 1e-9));
+      expect(result.positionOf('e').y, closeTo(143.7789204667999, 1e-9));
+      expect(result.positionOf('c').x, closeTo(22.31932746256588, 1e-9));
+      expect(result.positionOf('c').y, closeTo(301.6469031538893, 1e-9));
+      expect(result.positionOf('d').x, closeTo(112.31932746256588, 1e-9));
+      expect(result.positionOf('d').y, closeTo(301.6469031538893, 1e-9));
     });
 
     test('tiles a disconnected compound subtree bottom-up before force refinement', () {
@@ -1397,8 +1405,10 @@ void main() {
             ),
           );
 
-      expect(result.positionOf('b') - result.positionOf('a'), const Offset(-15, 55));
-      expect(result.positionOf('c') - result.positionOf('a'), const Offset(70, -5));
+      expect((result.positionOf('b') - result.positionOf('a')).x, closeTo(-15, 1e-9));
+      expect((result.positionOf('b') - result.positionOf('a')).y, closeTo(55, 1e-9));
+      expect((result.positionOf('c') - result.positionOf('a')).x, closeTo(70, 1e-9));
+      expect((result.positionOf('c') - result.positionOf('a')).y, closeTo(-5, 1e-9));
       expect(result.rectOf('inner').containsRect(result.rectOf('a')), isTrue);
       expect(result.rectOf('inner').containsRect(result.rectOf('b')), isTrue);
       expect(result.rectOf('outer').containsRect(result.rectOf('inner')), isTrue);

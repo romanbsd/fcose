@@ -67,7 +67,8 @@ final class FcoseLayout {
     final defaultEdgeLength = _averageIdealEdgeLength(working.edges);
     _validateConstraints(resolvedGraph, defaultEdgeLength);
     final originalGeometry = {for (final leaf in working.leaves) leaf.id: leaf.position ?? Offset.zero};
-    final originalComponentCenters = _componentCenters(working, originalGeometry);
+    final packingPartition = _packingPartition(working);
+    final originalComponentCenters = _componentCenters(working, originalGeometry, packingPartition);
     final originalBoundsCenter = _graphBounds(working, originalGeometry).center;
     var positions = _initialPositions(working, random);
     final constraintHandler = _constraintHandler(resolvedGraph, defaultEdgeLength);
@@ -106,15 +107,22 @@ final class FcoseLayout {
     if (runsSpringEmbedder) {
       iterations = _runSpringEmbedder(working, positions, constraintHandler, random);
     }
+    // cose-base gives the tiled members their coordinates back before
+    // `runLayout` returns, so everything below sees untiled geometry: the
+    // proxies and the dummy compounds live no longer than the spring embedder.
+    if (tiling != null) {
+      positions = _untiledPositions(resolvedGraph, tiling, positions, _paddedRectangles(working.compounds, positions));
+      working = _WorkingGraph(resolvedGraph);
+    }
     // Upstream relocates the result back to the center it held before the run,
     // whatever the step or quality; only fixed nodes, whose absolute coordinates
     // are the point of the constraint, suppress it. Packing is what splits the
     // graph into connected components, so it decides what "the result" means:
     // with packing each component returns to its own center, without it the
     // whole graph moves as one.
-    if (tiling == null && options.fixedNodes.isEmpty) {
+    if (options.fixedNodes.isEmpty) {
       if (_packingEnabled) {
-        _relocateComponentsToOriginalCenters(working, positions, originalComponentCenters);
+        _relocateComponentsToOriginalCenters(working, positions, packingPartition, originalComponentCenters);
       } else {
         final relocation = originalBoundsCenter - _graphBounds(working, positions).center;
         for (final leaf in working.leaves) {
@@ -122,8 +130,8 @@ final class FcoseLayout {
         }
       }
     }
-    if (_packingEnabled && tiling == null) {
-      _packComponents(working, positions);
+    if (_packingEnabled) {
+      _packComponents(working, positions, packingPartition);
     }
 
     final rectangles = _paddedRectangles(working.compounds, positions);
@@ -132,8 +140,7 @@ final class FcoseLayout {
       for (final node in working.graph.nodes)
         if (working.compounds.isCompound(node.id)) node.id: rectangles[node.id]!.center,
     };
-    final result = FcoseResult(positions: allPositions, rectangles: rectangles, iterations: iterations);
-    return tiling == null ? result : _restoreTiling(resolvedGraph, tiling, result);
+    return FcoseResult(positions: allPositions, rectangles: rectangles, iterations: iterations);
   }
 
   /// Node geometry for [positions] under the configured compound padding.
@@ -1022,7 +1029,6 @@ final class FcoseLayout {
           members: members,
           organization: organization,
           contentOffset: proxy.contentOffset,
-          isDummy: false,
         ),
       );
     }
@@ -1043,7 +1049,6 @@ final class FcoseLayout {
 
     final dummyNodes = <FcoseNode>[];
     final zeroDegreeMembers = <String>{};
-    Offset? originalBoundsCenter;
     var collisionIndex = 1;
     for (final entry in zeroDegreeByOwner.entries) {
       if (entry.value.length < 2) continue;
@@ -1073,18 +1078,8 @@ final class FcoseLayout {
       positions[dummyId] = organization.center;
       zeroDegreeMembers.addAll(entry.value.map((node) => node.id));
       groups.add(
-        _TiledGroup(
-          proxyId: dummyId,
-          members: entry.value,
-          organization: organization,
-          contentOffset: Offset.zero,
-          isDummy: true,
-        ),
+        _TiledGroup(proxyId: dummyId, members: entry.value, organization: organization, contentOffset: Offset.zero),
       );
-      if (entry.key == null && !options.randomize) {
-        final initialRectangles = _paddedRectangles(compounds, initialPositions);
-        originalBoundsCenter = compounds.ownerBounds(null, initialRectangles).center;
-      }
     }
 
     bool belowTiledCompound(FcoseNode node) {
@@ -1113,7 +1108,6 @@ final class FcoseLayout {
       graph: transformed,
       positions: {for (final leaf in transformed.leafNodes) leaf.id: positions[leaf.id]!},
       groups: _orderTiledGroups(groups),
-      originalBoundsCenter: originalBoundsCenter,
     );
   }
 
@@ -1187,9 +1181,20 @@ final class FcoseLayout {
     return result;
   }
 
-  FcoseResult _restoreTiling(FcoseGraph graph, _TilingPlan tiling, FcoseResult result) {
-    final positions = Map<String, Offset>.of(result.positions);
-    final rectangles = Map<String, Rect>.of(result.rectangles);
+  /// Positions for [graph]'s leaves once every tiled group has handed its
+  /// members their own coordinates back.
+  ///
+  /// The groups come ordered so that a proxy which is itself a member of another
+  /// group is placed by that group first, which is why the rectangles grow as we
+  /// go instead of being read from the tiled graph alone.
+  Map<String, Offset> _untiledPositions(
+    FcoseGraph graph,
+    _TilingPlan tiling,
+    Map<String, Offset> tiledPositions,
+    Map<String, Rect> tiledRectangles,
+  ) {
+    final restored = <String, Offset>{};
+    final rectangles = Map<String, Rect>.of(tiledRectangles);
     for (final group in tiling.groups) {
       final proxyRect = rectangles[group.proxyId]!;
       final organizationTopLeft = Offset(
@@ -1199,42 +1204,11 @@ final class FcoseLayout {
       final proxyTopLeft = Offset(proxyRect.left, proxyRect.top) + group.contentOffset;
       for (final member in group.members) {
         final position = proxyTopLeft + (group.organization.positions[member.id]! - organizationTopLeft);
-        positions[member.id] = position;
+        restored[member.id] = position;
         rectangles[member.id] = Rect.fromCenter(position, member.width, member.height);
       }
-      if (group.isDummy) {
-        positions.remove(group.proxyId);
-        rectangles.remove(group.proxyId);
-      }
     }
-
-    final compounds = CompoundGraphManager(graph);
-    var restoredRectangles = _paddedRectangles(compounds, {
-      for (final leaf in graph.leafNodes) leaf.id: positions[leaf.id]!,
-    });
-    var restoredPositions = <String, Offset>{
-      for (final leaf in graph.leafNodes) leaf.id: positions[leaf.id]!,
-      for (final node in graph.nodes)
-        if (compounds.isCompound(node.id)) node.id: restoredRectangles[node.id]!.center,
-    };
-    if (tiling.originalBoundsCenter case final originalCenter?) {
-      var bounds = restoredRectangles.values.first;
-      for (final rectangle in restoredRectangles.values.skip(1)) {
-        bounds = bounds.union(rectangle);
-      }
-      final relocation = originalCenter - bounds.center;
-      restoredPositions = {for (final entry in restoredPositions.entries) entry.key: entry.value + relocation};
-      restoredRectangles = {
-        for (final entry in restoredRectangles.entries)
-          entry.key: Rect(
-            entry.value.left + relocation.x,
-            entry.value.top + relocation.y,
-            entry.value.width,
-            entry.value.height,
-          ),
-      };
-    }
-    return FcoseResult(positions: restoredPositions, rectangles: restoredRectangles, iterations: result.iterations);
+    return {for (final leaf in graph.leafNodes) leaf.id: restored[leaf.id] ?? tiledPositions[leaf.id]!};
   }
 
   ConstraintHandler _constraintHandler(FcoseGraph graph, double defaultGap) => ConstraintHandler(
@@ -1291,16 +1265,51 @@ final class FcoseLayout {
       options.alignment.horizontal.isNotEmpty ||
       options.relativePlacements.isNotEmpty;
 
-  List<Offset> _componentCenters(_WorkingGraph graph, Map<String, Offset> positions) {
+  /// The components upstream hands to relocation and packing.
+  ///
+  /// Tiling collects every edge-free node into one block, so upstream treats the
+  /// components without an edge as a single pseudo-component: it appends their
+  /// nodes after the components that kept their edges and drops the originals.
+  /// It only bothers when the block holds more than one node, counting the
+  /// children of a compound as nodes of their own.
+  List<_PackingComponent> _packingPartition(_WorkingGraph graph) {
+    final components = graph.packingComponents;
+    if (!_packingEnabled || !options.tile || options.quality == LayoutQuality.draft) return components;
+    final connected = <_PackingComponent>[];
+    final edgeless = <_PackingComponent>[];
+    for (final component in components) {
+      final memberIds = component.nodes.toSet();
+      final hasEdge = graph.graph.edges.any(
+        (edge) => memberIds.contains(edge.source) && memberIds.contains(edge.target),
+      );
+      (hasEdge ? connected : edgeless).add(component);
+    }
+    final nodes = [for (final component in edgeless) ...component.nodes];
+    if (nodes.length < 2) return components;
+    return [
+      ...connected,
+      (
+        roots: [for (final component in edgeless) ...component.roots],
+        nodes: nodes,
+        leaves: [for (final component in edgeless) ...component.leaves],
+      ),
+    ];
+  }
+
+  List<Offset> _componentCenters(
+    _WorkingGraph graph,
+    Map<String, Offset> positions,
+    List<_PackingComponent> partition,
+  ) {
     if (_relocatesByLeafBounds) {
       return [
-        for (final component in graph.packingComponents)
+        for (final component in partition)
           _leafBounds([for (final id in component.leaves) graph.nodeById[id]!], positions).center,
       ];
     }
     final rectangles = _paddedRectangles(graph.compounds, positions);
     return [
-      for (final component in graph.packingComponents)
+      for (final component in partition)
         component.roots.skip(1).fold(rectangles[component.roots.first]!, (bounds, root) {
           return bounds.union(rectangles[root]!);
         }).center,
@@ -1310,10 +1319,11 @@ final class FcoseLayout {
   void _relocateComponentsToOriginalCenters(
     _WorkingGraph graph,
     Map<String, Offset> positions,
+    List<_PackingComponent> partition,
     List<Offset> originalCenters,
   ) {
-    final currentCenters = _componentCenters(graph, positions);
-    for (final (index, component) in graph.packingComponents.indexed) {
+    final currentCenters = _componentCenters(graph, positions, partition);
+    for (final (index, component) in partition.indexed) {
       final shift = originalCenters[index] - currentCenters[index];
       for (final id in component.leaves) {
         positions[id] = positions[id]! + shift;
@@ -1321,11 +1331,11 @@ final class FcoseLayout {
     }
   }
 
-  void _packComponents(_WorkingGraph graph, Map<String, Offset> positions) {
-    if (!options.packComponents || graph.packingComponents.length < 2 || options.fixedNodes.isNotEmpty) return;
+  void _packComponents(_WorkingGraph graph, Map<String, Offset> positions, List<_PackingComponent> partition) {
+    if (!options.packComponents || partition.length < 2 || options.fixedNodes.isNotEmpty) return;
     final rectangles = _paddedRectangles(graph.compounds, positions);
     final packingInput = <PackingComponent>[];
-    for (final component in graph.packingComponents) {
+    for (final component in partition) {
       final memberIds = component.nodes.toSet();
       packingInput.add(
         PackingComponent(
@@ -1346,7 +1356,7 @@ final class FcoseLayout {
             utility: options.packingUtility,
           ).pack(packingInput)
         : IncrementalComponentPacker(componentSpacing: options.componentSeparation).pack(packingInput);
-    for (final (index, component) in graph.packingComponents.indexed) {
+    for (final (index, component) in partition.indexed) {
       for (final id in component.leaves) {
         positions[id] = positions[id]! + shifts[index];
       }
@@ -1630,17 +1640,11 @@ final class _TiledOrganization {
 }
 
 final class _TilingPlan {
-  const _TilingPlan({
-    required this.graph,
-    required this.positions,
-    required this.groups,
-    required this.originalBoundsCenter,
-  });
+  const _TilingPlan({required this.graph, required this.positions, required this.groups});
 
   final FcoseGraph graph;
   final Map<String, Offset> positions;
   final List<_TiledGroup> groups;
-  final Offset? originalBoundsCenter;
 }
 
 final class _TiledGroup {
@@ -1649,15 +1653,17 @@ final class _TiledGroup {
     required this.members,
     required this.organization,
     required this.contentOffset,
-    required this.isDummy,
   });
 
   final String proxyId;
   final List<FcoseNode> members;
   final _TiledOrganization organization;
   final Offset contentOffset;
-  final bool isDummy;
 }
+
+/// One unit of component packing: the root-level nodes it spans, every node
+/// below them, and the leaves whose coordinates a shift has to move.
+typedef _PackingComponent = ({List<String> roots, List<String> nodes, List<String> leaves});
 
 final class _SpectralGraph {
   const _SpectralGraph(this.nodes, this.adjacency);
@@ -1701,8 +1707,7 @@ final class _WorkingGraph {
   /// Both are computed on demand: the tree-growth loop rebuilds a working graph
   /// per pruning round and needs neither.
   late final _SpectralGraph spectralGraph = _buildSpectralGraph();
-  late final List<({List<String> roots, List<String> nodes, List<String> leaves})> packingComponents =
-      _findPackingComponents();
+  late final List<_PackingComponent> packingComponents = _findPackingComponents();
   final Map<String, String> _representatives = {};
 
   String representative(String id) => _representatives.putIfAbsent(id, () => compounds.spectralRepresentative(id));
@@ -1786,7 +1791,7 @@ final class _WorkingGraph {
     );
   }
 
-  List<({List<String> roots, List<String> nodes, List<String> leaves})> _findPackingComponents() {
+  List<_PackingComponent> _findPackingComponents() {
     final rootNodes = graph.childrenByParent[null]!;
     final rootAdjacency = {for (final node in rootNodes) node.id: <String>{}};
     for (final edge in edges) {
@@ -1798,7 +1803,7 @@ final class _WorkingGraph {
     }
 
     final unseen = rootAdjacency.keys.toSet();
-    final result = <({List<String> roots, List<String> nodes, List<String> leaves})>[];
+    final result = <_PackingComponent>[];
     while (unseen.isNotEmpty) {
       final roots = <String>[];
       final queue = Queue<String>()..add(unseen.first);

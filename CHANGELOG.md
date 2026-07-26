@@ -40,3 +40,8 @@
 - Replace the spectral pseudo-inverse with a transcription of the JAMA
   singular value decomposition that layout-base uses, so compound spectral
   layouts now match upstream to about 1e-13.
+- Untile before relocating and packing, so a tiled layout now returns each
+  component to its original center and takes part in component packing instead
+  of keeping the coordinates the spring embedder left it with.
+- Treat the components without an edge as the single tiled pseudo-component
+  upstream packs, appended after the components that kept their edges.

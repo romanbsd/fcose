@@ -230,11 +230,17 @@ final class CompoundGraphManager {
   }
 
   /// Recomputes all rectangles bottom-up, just as LGraph.updateBounds(true).
-  Map<String, Rect> rectangles(Map<String, Offset> leafPositions, {required double padding}) {
-    final result = <String, Rect>{};
-    for (final node in graph.leafNodes) {
-      result[node.id] = Rect.fromCenter(leafPositions[node.id]!, node.width, node.height);
-    }
+  Map<String, Rect> rectangles(Map<String, Offset> leafPositions, {required double padding}) => rectanglesFromLeaves({
+    for (final node in graph.leafNodes) node.id: Rect.fromCenter(leafPositions[node.id]!, node.width, node.height),
+  }, padding: padding);
+
+  /// [rectangles] for callers that already track authoritative leaf corners.
+  ///
+  /// LNode stores its top-left corner and derives the center from it, so a
+  /// caller that keeps corners cannot round-trip them through centers without
+  /// losing the low bits.
+  Map<String, Rect> rectanglesFromLeaves(Map<String, Rect> leafRectangles, {required double padding}) {
+    final result = <String, Rect>{...leafRectangles};
     for (final node in _compoundBoundsOrder) {
       final children = graph.childrenByParent[node.id]!;
       var bounds = result[children.first.id]!;

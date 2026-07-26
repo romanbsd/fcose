@@ -1,0 +1,3 @@
+{"seed":7,"nodes":[{"id":"a","w":80,"h":80,"x":50,"y":50},{"id":"b","w":80,"h":80,"x":250,"y":50},{"id":"e","w":80,"h":80,"x":150,"y":150},{"id":"z","w":80,"h":80,"x":150,"y":120}],
+ "edges":[{"id":"ab","source":"a","target":"b"},{"id":"be","source":"b","target":"e"},{"id":"ea","source":"e","target":"a"}],
+ "options":{"quality":"proof","randomize":false,"numIter":10,"tile":true,"idealEdgeLength":120}}

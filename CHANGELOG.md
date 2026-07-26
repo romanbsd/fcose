@@ -48,3 +48,9 @@
 - Run one spectral pass and one spring embedder per connected component when
   packing is enabled, in upstream's order, so a component is no longer embedded
   alongside the components it is only packed beside.
+- Keep each leaf's top-left corner authoritative through the spring embedder,
+  as `LNode` does, and derive its center from that corner. Accumulating
+  displacements on a center instead lost the low bits of every tick, which
+  `calcRepulsionForce`'s minimum-distance sign snap turned into whole pixels
+  on symmetric graphs; every oracle fixture now matches upstream to about
+  1e-13.

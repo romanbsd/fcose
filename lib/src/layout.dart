@@ -429,7 +429,10 @@ final class FcoseLayout {
     final nodeRepulsions = Float64List(nodeCount);
     final ownerIds = List<String?>.filled(nodeCount, null);
     final ownerIndices = Int32List(nodeCount);
-    final gravities = List<({double range, double estimatedSize, double strength})?>.filled(nodeCount, null);
+    final gravities = List<({double range, double estimatedSize, double strength, double? compound})?>.filled(
+      nodeCount,
+      null,
+    );
     for (final (index, node) in nodes.indexed) {
       isFixed[index] = fixed.contains(node.id);
       nodeRepulsions[index] = node.nodeRepulsion ?? options.nodeRepulsion;
@@ -437,7 +440,7 @@ final class FcoseLayout {
       ownerIds[index] = owner;
       ownerIndices[index] = owner == null ? -1 : indexOf[owner]!;
     }
-    final gravityByOwner = <String?, ({double range, double estimatedSize, double strength})>{};
+    final gravityByOwner = <String?, ({double range, double estimatedSize, double strength, double? compound})>{};
     final processedOwners = <String?>{};
     for (final node in layoutNodes) {
       final owner = graph.compounds.ownerOf(node.id);
@@ -447,7 +450,10 @@ final class FcoseLayout {
       gravityByOwner[owner] = (
         range: owner == null ? options.gravityRange : options.compoundGravityRange,
         estimatedSize: graph.compounds.estimatedSizeOfOwner(owner),
-        strength: options.gravity * (owner == null ? 1 : options.compoundGravity),
+        // cose-base multiplies the compound factor in as a separate step, and
+        // folding it into one constant here would round differently.
+        strength: options.gravity,
+        compound: owner == null ? null : options.compoundGravity,
       );
     }
     for (final node in layoutNodes) {
@@ -478,8 +484,23 @@ final class FcoseLayout {
       ));
     }
     final rectangleByIndex = List<Rect>.filled(nodeCount, _originRect);
-    final forceX = Float64List(nodeCount);
-    final forceY = Float64List(nodeCount);
+    // LNode keeps its top-left corner authoritative and derives the center from
+    // it, so displacements have to accumulate on the corner: adding them to a
+    // center instead and re-deriving the corner every tick drops the low bits.
+    final leafLeft = Float64List(nodeCount);
+    final leafTop = Float64List(nodeCount);
+    for (final index in leafIndices) {
+      final rect = Rect.fromCenter(positions[nodes[index].id]!, nodes[index].width, nodes[index].height);
+      leafLeft[index] = rect.x;
+      leafTop[index] = rect.y;
+    }
+    // cose-base keeps spring, repulsion and gravitation in separate fields and
+    // only adds them together in CoSENode.calculateDisplacement, so a single
+    // accumulator would round the sum differently.
+    final springForceX = Float64List(nodeCount);
+    final springForceY = Float64List(nodeCount);
+    final repulsionForceX = Float64List(nodeCount);
+    final repulsionForceY = Float64List(nodeCount);
     final leafDisplacementX = Float64List(nodeCount);
     final leafDisplacementY = Float64List(nodeCount);
     final ownerBounds = <String?, Rect>{};
@@ -550,11 +571,16 @@ final class FcoseLayout {
           );
         }
       }
-      final rectangles = _paddedRectangles(graph.compounds, positions);
+      final rectangles = graph.compounds.rectanglesFromLeaves({
+        for (final index in leafIndices)
+          nodes[index].id: Rect(leafLeft[index], leafTop[index], nodes[index].width, nodes[index].height),
+      }, padding: options.compoundPadding);
       for (var index = 0; index < nodeCount; index++) {
         rectangleByIndex[index] = rectangles[nodes[index].id]!;
-        forceX[index] = 0;
-        forceY[index] = 0;
+        springForceX[index] = 0;
+        springForceY[index] = 0;
+        repulsionForceX[index] = 0;
+        repulsionForceY[index] = 0;
         leafDisplacementX[index] = 0;
         leafDisplacementY[index] = 0;
       }
@@ -577,11 +603,12 @@ final class FcoseLayout {
         if (firstRect.overlaps(secondRect)) {
           final childFactor = firstWeight * secondWeight / (firstWeight + secondWeight);
           final separation = firstRect.separationAmountTo(secondRect, buffer: separationBuffer);
-          final scale = -2 * childFactor;
-          forceX[first] += separation.x * scale;
-          forceY[first] += separation.y * scale;
-          forceX[second] -= separation.x * scale;
-          forceY[second] -= separation.y * scale;
+          final overlapForceX = 2 * separation.x;
+          final overlapForceY = 2 * separation.y;
+          repulsionForceX[first] -= childFactor * overlapForceX;
+          repulsionForceY[first] -= childFactor * overlapForceY;
+          repulsionForceX[second] += childFactor * overlapForceX;
+          repulsionForceY[second] += childFactor * overlapForceY;
           continue;
         }
         double deltaX;
@@ -596,16 +623,17 @@ final class FcoseLayout {
         }
         if (deltaX.abs() < minimumComponentDistance) deltaX = deltaX.sign * minimumComponentDistance;
         if (deltaY.abs() < minimumComponentDistance) deltaY = deltaY.sign * minimumComponentDistance;
-        final boundaryDistance = math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        final squaredDistance = deltaX * deltaX + deltaY * deltaY;
+        final boundaryDistance = math.sqrt(squaredDistance);
         if (boundaryDistance == 0) continue;
         final pairRepulsion = nodeRepulsions[first] / 2 + nodeRepulsions[second] / 2;
-        final magnitude = pairRepulsion * firstWeight * secondWeight / (boundaryDistance * boundaryDistance);
-        final unitX = deltaX / boundaryDistance;
-        final unitY = deltaY / boundaryDistance;
-        forceX[first] -= unitX * magnitude;
-        forceY[first] -= unitY * magnitude;
-        forceX[second] += unitX * magnitude;
-        forceY[second] += unitY * magnitude;
+        final magnitude = pairRepulsion * firstWeight * secondWeight / squaredDistance;
+        final componentX = magnitude * deltaX / boundaryDistance;
+        final componentY = magnitude * deltaY / boundaryDistance;
+        repulsionForceX[first] -= componentX;
+        repulsionForceY[first] -= componentY;
+        repulsionForceX[second] += componentX;
+        repulsionForceY[second] += componentY;
       }
 
       // Hooke springs act on their real endpoints, including compounds.
@@ -632,17 +660,18 @@ final class FcoseLayout {
         final magnitude = elasticity * (length - idealLength);
         final forceComponentX = deltaX / length * magnitude;
         final forceComponentY = deltaY / length * magnitude;
-        forceX[source] += forceComponentX;
-        forceY[source] += forceComponentY;
-        forceX[target] -= forceComponentX;
-        forceY[target] -= forceComponentY;
+        springForceX[source] += forceComponentX;
+        springForceY[source] += forceComponentY;
+        springForceX[target] -= forceComponentX;
+        springForceY[target] -= forceComponentY;
       }
 
       for (final index in layoutIndices) {
         if (isFixed[index]) continue;
         final nodeRect = rectangleByIndex[index];
         final position = nodeRect.center;
-        var gravityForce = Offset.zero;
+        var gravitationForceX = 0.0;
+        var gravitationForceY = 0.0;
         final gravity = gravities[index];
         if (gravity != null) {
           final owner = ownerIds[index];
@@ -651,14 +680,21 @@ final class FcoseLayout {
           final distance = position - ownerCenter;
           if (distance.x.abs() + nodeRect.width / 2 > gravity.estimatedSize * gravity.range ||
               distance.y.abs() + nodeRect.height / 2 > gravity.estimatedSize * gravity.range) {
-            gravityForce = (ownerCenter - position) * gravity.strength;
+            gravitationForceX = -gravity.strength * distance.x;
+            gravitationForceY = -gravity.strength * distance.y;
+            final compound = gravity.compound;
+            if (compound != null) {
+              gravitationForceX *= compound;
+              gravitationForceY *= compound;
+            }
           }
         }
         // cose-base assigns weight 100 to each fixed leaf below a compound so
         // forces on the ancestor only gently move its unfixed descendants.
-        final scale = coolingFactor / movementWeights[index];
-        var displacementX = (forceX[index] + gravityForce.x) * scale;
-        var displacementY = (forceY[index] + gravityForce.y) * scale;
+        var displacementX =
+            coolingFactor * (springForceX[index] + repulsionForceX[index] + gravitationForceX) / movementWeights[index];
+        var displacementY =
+            coolingFactor * (springForceY[index] + repulsionForceY[index] + gravitationForceY) / movementWeights[index];
         if (!isCompound[index]) {
           displacementX += leafDisplacementX[index];
           displacementY += leafDisplacementY[index];
@@ -685,19 +721,20 @@ final class FcoseLayout {
           for (final index in leafIndices) nodes[index].id: Offset(leafDisplacementX[index], leafDisplacementY[index]),
         };
         constraintHandler.constrainDisplacements(positions, leafDisplacements, iteration: iterationNumber);
-        for (final entry in leafDisplacements.entries) {
-          positions[entry.key] = positions[entry.key]! + entry.value;
-          totalDisplacement += entry.value.x.abs() + entry.value.y.abs();
-        }
-      } else {
         for (final index in leafIndices) {
-          final id = nodes[index].id;
-          final displacementX = leafDisplacementX[index];
-          final displacementY = leafDisplacementY[index];
-          final position = positions[id]!;
-          positions[id] = Offset(position.x + displacementX, position.y + displacementY);
-          totalDisplacement += displacementX.abs() + displacementY.abs();
+          final displacement = leafDisplacements[nodes[index].id]!;
+          leafDisplacementX[index] = displacement.x;
+          leafDisplacementY[index] = displacement.y;
         }
+      }
+      for (final index in leafIndices) {
+        final node = nodes[index];
+        final displacementX = leafDisplacementX[index];
+        final displacementY = leafDisplacementY[index];
+        leafLeft[index] += displacementX;
+        leafTop[index] += displacementY;
+        positions[node.id] = Rect(leafLeft[index], leafTop[index], node.width, node.height).center;
+        totalDisplacement += displacementX.abs() + displacementY.abs();
       }
     }
     return _SpringPhaseResult(

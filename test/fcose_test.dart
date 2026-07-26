@@ -1311,24 +1311,17 @@ void main() {
             ),
           );
 
-      // Both components now hold upstream's shape to 0.09px, and what is left is
-      // a rigid 7.07px shift of each of them: upstream ends at `a`
-      // [85.3021685902211, -43.94838218086505], `b` [287.9585905117531,
-      // -43.972205200879216], `e` [186.63316539046826, 141.411953100745], `c`
-      // [12.04140948824692, 301.2801260500671], `d` [102.04140948824693,
-      // 301.2801260500671]. The triangle and the tiled block overlap when POSE
-      // starts packing them, and the port takes that intersection branch on a
-      // different iteration than the turf-based test upstream uses.
-      expect(result.positionOf('a').x, closeTo(78.23731513311134, 1e-9));
-      expect(result.positionOf('a').y, closeTo(-44.03862974306806, 1e-9));
-      expect(result.positionOf('b').x, closeTo(280.89194529243235, 1e-9));
-      expect(result.positionOf('b').y, closeTo(-44.0146378897777, 1e-9));
-      expect(result.positionOf('e').x, closeTo(179.5601751435174, 1e-9));
-      expect(result.positionOf('e').y, closeTo(141.34616807344128, 1e-9));
-      expect(result.positionOf('c').x, closeTo(19.108054707567696, 1e-9));
-      expect(result.positionOf('c').y, closeTo(301.34623083481347, 1e-9));
-      expect(result.positionOf('d').x, closeTo(109.1080547075677, 1e-9));
-      expect(result.positionOf('d').y, closeTo(301.34623083481347, 1e-9));
+      // Upstream's own positions, reproduced to 1e-13.
+      expect(result.positionOf('a').x, closeTo(85.3021685902211, 1e-9));
+      expect(result.positionOf('a').y, closeTo(-43.94838218086505, 1e-9));
+      expect(result.positionOf('b').x, closeTo(287.9585905117531, 1e-9));
+      expect(result.positionOf('b').y, closeTo(-43.972205200879216, 1e-9));
+      expect(result.positionOf('e').x, closeTo(186.63316539046826, 1e-9));
+      expect(result.positionOf('e').y, closeTo(141.411953100745, 1e-9));
+      expect(result.positionOf('c').x, closeTo(12.04140948824692, 1e-9));
+      expect(result.positionOf('c').y, closeTo(301.2801260500671, 1e-9));
+      expect(result.positionOf('d').x, closeTo(102.04140948824693, 1e-9));
+      expect(result.positionOf('d').y, closeTo(301.2801260500671, 1e-9));
     });
 
     test('tiles a disconnected compound subtree bottom-up before force refinement', () {

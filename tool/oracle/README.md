@@ -35,11 +35,17 @@ plus two knobs upstream exposes only through internals:
   spec can converge in a handful of iterations.
 
 The specs here reproduce the graphs of the pinned expectations in
-`test/fcose_test.dart`. Every spectral fixture, including the compound ones,
-agrees to about 1e-13; the ones that iterate longest (`iteration-floor`,
-`post-growth-cooling`, `tree-reduction-cooling`) drift up to a third of a
-pixel, which is the accumulated difference between JavaScript and Dart
-evaluation of the same nonlinear ticks rather than a behavioral gap.
+`test/fcose_test.dart`. Every fixture agrees to about 1e-13.
+
+`symmetric-triangle` and `packed-symmetric-triangle` are not pinned in the
+test suite; they exist because a symmetric graph is the sharpest parity probe
+there is. `calcRepulsionForce` snaps any component below
+`MIN_REPULSION_DIST` to `sign(delta) * MIN_REPULSION_DIST`, so on a graph
+whose two halves are exact mirrors, a single-ulp difference in one coordinate
+decides a sign and becomes a twelve-pixel kick within a few ticks. The packed
+variant then feeds that triangle's hull to POSE, where a mirrored hull moves
+the isolated component to the opposite side, and the fixture fails by a
+hundred pixels. Both are the same one-ulp question asked at two amplitudes.
 
 ## Known divergences
 

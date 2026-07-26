@@ -1885,6 +1885,63 @@ void main() {
       expect(result.positionOf('free').x, 75);
     });
 
+    test('recenters on the bounding box the host reports, not the one it lays out', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              randomize: false,
+              maxIterations: 30,
+              idealEdgeLength: 70,
+              compoundPadding: 0,
+              alignment: AlignmentConstraint(
+                vertical: [
+                  ['a', 'c'],
+                ],
+              ),
+              relativePlacements: [RelativePlacementConstraint.vertical('a', 'b', gap: 90)],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'p1'),
+                FcoseNode(id: 'p2'),
+                FcoseNode(id: 'a', parentId: 'p1', position: Offset.zero),
+                FcoseNode(id: 'b', parentId: 'p1', position: Offset(60, 80)),
+                FcoseNode(id: 'c', parentId: 'p2', position: Offset(220, 10)),
+                FcoseNode(id: 'd', parentId: 'p2', position: Offset(280, 90)),
+                FcoseNode(id: 'e', position: Offset(120, 220)),
+                FcoseNode(id: 'f', position: Offset(10, 260)),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'cd', source: 'c', target: 'd'),
+                FcoseEdge(id: 'ac', source: 'a', target: 'c'),
+                FcoseEdge(id: 'eb', source: 'e', target: 'b'),
+              ],
+            ),
+          );
+
+      // The graph the layout produces is measured on cose-base rectangles, but
+      // the center it is put back on came from the host, which stands a
+      // compound's box a border-half and an antialiasing pixel outside its
+      // children's. Two of these roots are compounds and two are plain, so the
+      // two rulers disagree, and every node lands three quarters of a pixel
+      // above where the layout's own measurement would have left it.
+      expect(result.positionOf('a').x, closeTo(160.9947303055039, 1e-9));
+      expect(result.positionOf('a').y, closeTo(-24.818793767226673, 1e-9));
+      expect(result.positionOf('b').x, closeTo(61.72909721473022, 1e-9));
+      expect(result.positionOf('b').y, closeTo(65.18120623277332, 1e-9));
+      expect(result.positionOf('c').x, closeTo(160.9947303055039, 1e-9));
+      expect(result.positionOf('c').y, closeTo(118.5068525395046, 1e-9));
+      expect(result.positionOf('d').x, closeTo(271.63300926371664, 1e-9));
+      expect(result.positionOf('d').y, closeTo(175.55900835096978, 1e-9));
+      expect(result.positionOf('e').x, closeTo(58.19680384176683, 1e-9));
+      expect(result.positionOf('e').y, closeTo(167.60980721123457, 1e-9));
+      expect(result.positionOf('f').x, closeTo(8.366990736283393, 1e-9));
+      expect(result.positionOf('f').y, closeTo(283.3187937672267, 1e-9));
+    });
+
     test('exposes the enforced constraint-debug stage without refinement', () {
       final result =
           FcoseLayout(
@@ -1908,6 +1965,47 @@ void main() {
       expect(result.positionOf('a'), const Offset(10, 20));
       expect(result.positionOf('b'), const Offset(110, 120));
       expect(result.positionOf('c'), const Offset(210, 40));
+    });
+
+    test('skips the spectral embedding for a debug step even when randomized', () {
+      final result =
+          FcoseLayout(
+            options: const FcoseOptions(
+              quality: LayoutQuality.proof,
+              seed: 5,
+              step: LayoutStep.enforced,
+              alignment: AlignmentConstraint(
+                vertical: [
+                  ['a', 'd'],
+                ],
+              ),
+              relativePlacements: [RelativePlacementConstraint.horizontal('a', 'b', gap: 140)],
+            ),
+          ).run(
+            FcoseGraph(
+              nodes: const [
+                FcoseNode(id: 'a', width: 60, height: 60),
+                FcoseNode(id: 'b', width: 60, height: 60),
+                FcoseNode(id: 'c', width: 60, height: 60),
+                FcoseNode(id: 'd', width: 60, height: 60),
+              ],
+              edges: const [
+                FcoseEdge(id: 'ab', source: 'a', target: 'b'),
+                FcoseEdge(id: 'bc', source: 'b', target: 'c'),
+                FcoseEdge(id: 'cd', source: 'c', target: 'd'),
+              ],
+            ),
+          );
+
+      // Upstream calls the spectral routine for every randomized run, but the
+      // routine embeds nothing unless the quality is draft or the step is the
+      // whole pipeline; a debug step reads back the positions it was given.
+      // Every node here starts at the origin, so only the constraints move
+      // anything, and c, which no constraint names, does not move at all.
+      expect(result.positionOf('a'), const Offset(-70, 0));
+      expect(result.positionOf('b'), const Offset(70, 0));
+      expect(result.positionOf('c'), Offset.zero);
+      expect(result.positionOf('d'), const Offset(-70, 0));
     });
 
     test('starts the CoSE debug stage before constraint preprocessing', () {

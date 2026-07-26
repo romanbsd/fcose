@@ -239,8 +239,15 @@ final class CompoundGraphManager {
   /// LNode stores its top-left corner and derives the center from it, so a
   /// caller that keeps corners cannot round-trip them through centers without
   /// losing the low bits.
-  Map<String, Rect> rectanglesFromLeaves(Map<String, Rect> leafRectangles, {required double padding}) {
-    final result = <String, Rect>{...leafRectangles};
+  Map<String, Rect> rectanglesFromLeaves(
+    Map<String, Rect> leafRectangles, {
+    required double padding,
+    double leafInflation = 0,
+    double compoundInflation = 0,
+  }) {
+    final result = <String, Rect>{
+      for (final entry in leafRectangles.entries) entry.key: entry.value.inflate(leafInflation),
+    };
     for (final node in _compoundBoundsOrder) {
       final children = graph.childrenByParent[node.id]!;
       var bounds = result[children.first.id]!;
@@ -281,11 +288,36 @@ final class CompoundGraphManager {
             height += node.labelHeight;
         }
       }
-      result[node.id] = Rect(left, top, width, height);
+      result[node.id] = Rect(left, top, width, height).inflate(compoundInflation);
     }
     return result;
   }
+
+  /// The boxes the host reports for [leafRectangles], which is what fCoSE
+  /// measures when it decides where to put its result back.
+  ///
+  /// Cytoscape pads every box by a pixel for antialiasing and draws a compound
+  /// with a border whose outer half falls outside the compound, so a compound
+  /// box stands further out than its children's do. The difference cancels
+  /// between boxes of the same kind, which is why it is invisible until a
+  /// graph puts a compound beside a plain node: then the two sides of the
+  /// bounding box are padded by different amounts, and the center that fCoSE
+  /// relocates to moves.
+  Map<String, Rect> hostRectangles(
+    Map<String, Rect> leafRectangles, {
+    required double padding,
+    required double borderWidth,
+  }) => rectanglesFromLeaves(
+    leafRectangles,
+    padding: padding,
+    leafInflation: _antialiasPadding,
+    compoundInflation: borderWidth / 2 + _antialiasPadding,
+  );
 }
 
 /// layout-base `LayoutConstants.EMPTY_COMPOUND_NODE_SIZE`, in pixels.
 const _emptyCompoundNodeSize = 40.0;
+
+/// What Cytoscape adds to every side of a box it reports, so that a rendered
+/// edge of one pixel is never clipped by its own bounding box.
+const _antialiasPadding = 1.0;

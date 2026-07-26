@@ -1,0 +1,7 @@
+{"seed":5,
+ "nodes":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"}],
+ "edges":[{"id":"ab","source":"a","target":"b"},{"id":"bc","source":"b","target":"c"},{"id":"cd","source":"c","target":"d"},{"id":"de","source":"d","target":"e"},{"id":"ef","source":"e","target":"f"},{"id":"fa","source":"f","target":"a"}],
+ "options":{"quality":"proof","randomize":true,"numIter":25,"idealEdgeLength":80,
+   "fixedNodeConstraint":[{"nodeId":"a","position":{"x":-200,"y":0}}],
+   "alignmentConstraint":{"horizontal":[["b","c","d"]]},
+   "relativePlacementConstraint":[{"left":"b","right":"c","gap":100},{"top":"e","bottom":"f"}]}}

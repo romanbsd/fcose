@@ -1,0 +1,4 @@
+{"seed":11,
+ "nodes":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"},{"id":"g"},{"id":"h"}],
+ "edges":[{"id":"ab","source":"a","target":"b"},{"id":"bc","source":"b","target":"c"},{"id":"cd","source":"c","target":"d"},{"id":"de","source":"d","target":"e"},{"id":"ef","source":"e","target":"f"},{"id":"fg","source":"f","target":"g"},{"id":"gh","source":"g","target":"h"},{"id":"ha","source":"h","target":"a"},{"id":"ce","source":"c","target":"e"}],
+ "options":{"quality":"proof","randomize":true,"numIter":20,"idealEdgeLength":80,"tile":false,"packComponents":false}}

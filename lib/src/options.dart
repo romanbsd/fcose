@@ -40,6 +40,7 @@ final class FcoseOptions {
     this.compoundGravityRange = 1.5,
     this.nestingFactor = 0.1,
     this.compoundPadding = 10,
+    this.compoundBorderWidth = 1,
     this.uniformNodeDimensions = false,
     this.packComponents = true,
     this.componentSeparation = 80,
@@ -101,6 +102,16 @@ final class FcoseOptions {
 
   /// Fallback padding for compound nodes without [FcoseNode.padding].
   final double compoundPadding;
+
+  /// Border drawn around a compound node, in logical pixels.
+  ///
+  /// The default is the width Cytoscape's `:parent` rule uses. fCoSE never
+  /// applies a force to it, but it asks the host for the bounding box of the
+  /// graph before the run and puts the result back on that box's center, and
+  /// the host measures a compound's border there. Half of it lies outside the
+  /// compound, so a graph mixing compounds with plain nodes settles half a
+  /// border away from where it would otherwise.
+  final double compoundBorderWidth;
 
   /// Uses center-to-center spring and repulsion distances for leaf pairs.
   ///

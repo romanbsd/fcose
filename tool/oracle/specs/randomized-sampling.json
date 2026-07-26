@@ -1,0 +1,4 @@
+{"seed":3,
+ "nodes":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"},{"id":"g"},{"id":"h"},{"id":"i"},{"id":"j"},{"id":"k"},{"id":"l"}],
+ "edges":[{"id":"ab","source":"a","target":"b"},{"id":"bc","source":"b","target":"c"},{"id":"cd","source":"c","target":"d"},{"id":"de","source":"d","target":"e"},{"id":"ef","source":"e","target":"f"},{"id":"fg","source":"f","target":"g"},{"id":"gh","source":"g","target":"h"},{"id":"hi","source":"h","target":"i"},{"id":"ij","source":"i","target":"j"},{"id":"jk","source":"j","target":"k"},{"id":"kl","source":"k","target":"l"},{"id":"la","source":"l","target":"a"},{"id":"cf","source":"c","target":"f"},{"id":"ei","source":"e","target":"i"}],
+ "options":{"quality":"proof","randomize":true,"numIter":15,"sampleSize":5,"samplingType":false,"idealEdgeLength":80,"tile":false,"packComponents":false}}

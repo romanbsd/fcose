@@ -68,8 +68,8 @@ final class FcoseLayout {
     _validateConstraints(resolvedGraph, defaultEdgeLength);
     final originalGeometry = {for (final leaf in working.leaves) leaf.id: leaf.position ?? Offset.zero};
     final packingPartition = _packingPartition(working);
-    final originalComponentCenters = _componentCenters(working, originalGeometry, packingPartition);
-    final originalBoundsCenter = _graphBounds(working, originalGeometry).center;
+    final originalComponentCenters = _componentCenters(working, originalGeometry, packingPartition, asHost: true);
+    final originalBoundsCenter = _originalGraphBounds(working, originalGeometry).center;
     // With packing on, upstream never sees the whole graph at once: it splits the
     // graph into connected components and sends each one through its own spectral
     // pass, so a component is embedded without the dummy nodes that would
@@ -169,6 +169,18 @@ final class FcoseLayout {
   Map<String, Rect> _paddedRectangles(CompoundGraphManager compounds, Map<String, Offset> positions) =>
       compounds.rectangles(positions, padding: options.compoundPadding);
 
+  /// [_paddedRectangles] as the host reports them, which fCoSE reads only to
+  /// find the center the finished layout is relocated onto.
+  Map<String, Rect> _hostRectangles(CompoundGraphManager compounds, Map<String, Offset> positions) =>
+      compounds.hostRectangles(
+        {
+          for (final node in compounds.graph.leafNodes)
+            node.id: Rect.fromCenter(positions[node.id]!, node.width, node.height),
+        },
+        padding: options.compoundPadding,
+        borderWidth: options.compoundBorderWidth,
+      );
+
   FcoseGraph _resolveElementOptions(FcoseGraph graph) {
     final seenPairs = <(String, String)>{};
     final resolvedEdges = <FcoseEdge>[];
@@ -243,6 +255,7 @@ final class FcoseLayout {
               nodeSeparation: options.nodeSeparation,
               tolerance: options.powerIterationTolerance,
               random: random,
+              computesEmbedding: options.quality == LayoutQuality.draft || options.step == LayoutStep.all,
             )
             .run(
               spectral.nodes,
@@ -1413,21 +1426,20 @@ final class FcoseLayout {
   List<Offset> _componentCenters(
     _WorkingGraph graph,
     Map<String, Offset> positions,
-    List<_PackingComponent> partition,
-  ) {
+    List<_PackingComponent> partition, {
+    bool asHost = false,
+  }) {
     if (_relocatesByLeafBounds) {
       return [
         for (final component in partition)
           _leafBounds([for (final id in component.leaves) graph.nodeById[id]!], positions).center,
       ];
     }
-    final rectangles = _paddedRectangles(graph.compounds, positions);
-    return [
-      for (final component in partition)
-        component.roots.skip(1).fold(rectangles[component.roots.first]!, (bounds, root) {
-          return bounds.union(rectangles[root]!);
-        }).center,
-    ];
+    // Only the pre-run measurement comes from the host; see [_originalGraphBounds].
+    final rectangles = asHost
+        ? _hostRectangles(graph.compounds, positions)
+        : _paddedRectangles(graph.compounds, positions);
+    return [for (final component in partition) _rootsUnion(component.roots, rectangles).center];
   }
 
   void _relocateComponentsToOriginalCenters(
@@ -1551,11 +1563,26 @@ final class FcoseLayout {
 
   Rect _graphBounds(_WorkingGraph graph, Map<String, Offset> positions) {
     if (_relocatesByLeafBounds) return _leafBounds(graph.leaves, positions);
-    final rectangles = _paddedRectangles(graph.compounds, positions);
-    final roots = graph.graph.childrenByParent[null]!;
-    var bounds = rectangles[roots.first.id]!;
-    for (final root in roots.skip(1)) {
-      bounds = bounds.union(rectangles[root.id]!);
+    final roots = graph.graph.childrenByParent[null]!.map((node) => node.id);
+    return _rootsUnion(roots, _paddedRectangles(graph.compounds, positions));
+  }
+
+  /// [_graphBounds] as the host measured it before the run.
+  ///
+  /// fCoSE asks Cytoscape for the bounding box of the graph, then relocates
+  /// what cose-base produced onto that box's center, so the two ends of the
+  /// relocation are measured by different rulers.
+  Rect _originalGraphBounds(_WorkingGraph graph, Map<String, Offset> positions) {
+    if (_relocatesByLeafBounds) return _leafBounds(graph.leaves, positions);
+    final roots = graph.graph.childrenByParent[null]!.map((node) => node.id);
+    return _rootsUnion(roots, _hostRectangles(graph.compounds, positions));
+  }
+
+  Rect _rootsUnion(Iterable<String> roots, Map<String, Rect> rectangles) {
+    final iterator = roots.iterator..moveNext();
+    var bounds = rectangles[iterator.current]!;
+    while (iterator.moveNext()) {
+      bounds = bounds.union(rectangles[iterator.current]!);
     }
     return bounds;
   }

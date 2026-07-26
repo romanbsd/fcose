@@ -54,3 +54,12 @@
   `calcRepulsionForce`'s minimum-distance sign snap turned into whole pixels
   on symmetric graphs; every oracle fixture now matches upstream to about
   1e-13.
+- Skip the spectral embedding for a debug `step` of a randomized run. Upstream
+  calls its spectral routine whenever `randomize` is on, but the routine only
+  embeds anything for a draft run or the whole pipeline, and otherwise reads
+  back the positions it was given.
+- Measure the bounding box that the closing relocation aims at the way the
+  host reports it, adding `FcoseOptions.compoundBorderWidth`. A compound's box
+  stands half a border and an antialiasing pixel outside its children's, so a
+  graph mixing compounds with plain nodes settled three quarters of a pixel
+  away from upstream.

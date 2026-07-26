@@ -20,8 +20,15 @@ Only leaves are compared. Upstream hands `layoutPositions` the nodes that do
 not match `:parent`, so a compound never receives a layout coordinate at all:
 the one the oracle reports is what Cytoscape's compound-bounds rule derives
 from the children, after padding every box by a pixel for antialiasing and
-another for the default parent border. That is a rendering convention of the
-host, not a result of fCoSE.
+another for the default parent border.
+
+That rule is the host's, but it is not confined to the host. fCoSE asks
+Cytoscape for the bounding box of the graph before the run and relocates its
+result onto that box's center, so the padding reaches the leaves as well. It
+cancels between boxes of the same kind, which is why it stays invisible until
+a graph puts a compound beside a plain node: `compound-host-bounds.json`
+does, and every node in it lands three quarters of a pixel from where the
+layout's own rectangles would have put it.
 
 ## Specs
 
@@ -34,8 +41,18 @@ plus two knobs upstream exposes only through internals:
 - `finalTemperature` overrides the cooling floor cose-base hardcodes, so a
   spec can converge in a handful of iterations.
 
-The specs here reproduce the graphs of the pinned expectations in
+Most of the specs here reproduce the graphs of the pinned expectations in
 `test/fcose_test.dart`. Every fixture agrees to about 1e-13.
+
+The rest widen the sweep past the plain unconstrained run the pinned
+expectations mostly cover: `fixed-node-anchoring`, `relative-placement-gaps`
+and `combined-constraints` refine a graph under each kind of constraint and
+under all three at once, `randomized-constraints` puts them on top of a
+spectral start, `randomized-spectral` and `randomized-sampling` embed a graph
+with greedy and with random sampling, `packed-tiled-components` packs and
+tiles in the same run, and `enforced-stage` asks for a debug step of a
+randomized run, which is the one case where upstream calls its spectral
+routine and gets no embedding out of it.
 
 `symmetric-triangle` and `packed-symmetric-triangle` are not pinned in the
 test suite; they exist because a symmetric graph is the sharpest parity probe

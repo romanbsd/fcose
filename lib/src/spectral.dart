@@ -32,12 +32,22 @@ final class SpectralInitializer {
     required this.nodeSeparation,
     required this.random,
     this.tolerance = 1e-7,
+    this.computesEmbedding = true,
   });
 
   final int sampleSize;
   final SamplingType samplingType;
   final double nodeSeparation;
   final double tolerance;
+
+  /// Whether the embedding is computed at all, mirroring the gate `spectral.js`
+  /// puts around its sampling and power iteration.
+  ///
+  /// Only a draft run or a whole-pipeline step earns an embedding; the debug
+  /// steps call the same routine but leave with the positions they came in
+  /// with. The graphs of two nodes or fewer are decided before the gate, so
+  /// they keep their shortcut either way.
+  final bool computesEmbedding;
 
   /// Shared with the rest of the layout, because fCoSE draws its samples, its
   /// eigenvector guesses and its tree-growth choices from one `Math.random`
@@ -63,6 +73,11 @@ final class SpectralInitializer {
         );
       }
       return SpectralResult(positions, const []);
+    }
+    if (!computesEmbedding) {
+      // Upstream draws no random number here, so neither may this: the samples
+      // and eigenvector guesses of a later component would all shift.
+      return SpectralResult({for (final node in nodes) node: initialPositions[node] ?? Offset.zero}, const []);
     }
     final count = math.min(sampleSize, nodes.length);
     final nodeSet = nodes.toSet();

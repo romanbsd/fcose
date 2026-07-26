@@ -2411,5 +2411,46 @@ void main() {
         throwsArgumentError,
       );
     });
+
+    test('keeps the flat n=800 spring hot path bit-stable', () {
+      // Characterization lock for allocation-free spring ticks: same graph, seed,
+      // and options as tool/bench_layout.dart's common fixture.
+      final side = 29; // ceil(sqrt(800))
+      final nodes = [for (var i = 0; i < 800; i++) FcoseNode(id: 'n$i', width: 40, height: 30)];
+      final edges = <FcoseEdge>[];
+      for (var i = 0; i < 800; i++) {
+        final x = i % side;
+        final y = i ~/ side;
+        if (x + 1 < side && i + 1 < 800) {
+          edges.add(FcoseEdge(id: 'e${i}_r', source: 'n$i', target: 'n${i + 1}', idealLength: 50));
+        }
+        final below = i + side;
+        if (y + 1 < side && below < 800) {
+          edges.add(FcoseEdge(id: 'e${i}_d', source: 'n$i', target: 'n$below', idealLength: 50));
+        }
+      }
+      final result = FcoseLayout(
+        options: const FcoseOptions(
+          quality: LayoutQuality.proof,
+          randomize: true,
+          seed: 7,
+          packComponents: false,
+          tile: false,
+        ),
+      ).run(FcoseGraph(nodes: nodes, edges: edges));
+
+      final ids = result.positions.keys.toList()..sort();
+      final dump = StringBuffer();
+      for (final id in ids) {
+        final point = result.positions[id]!;
+        dump.writeln('$id ${point.x.toStringAsExponential(17)} ${point.y.toStringAsExponential(17)}');
+      }
+      var hash = 0xcbf29ce484222325;
+      for (final unit in dump.toString().codeUnits) {
+        hash ^= unit;
+        hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
+      }
+      expect(hash.toRadixString(16).padLeft(16, '0'), '0971402e9cafe83a');
+    });
   });
 }

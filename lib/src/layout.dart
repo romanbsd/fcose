@@ -537,6 +537,9 @@ final class FcoseLayout {
     // Reused by every repulsion and spring pair so the inner loops allocate
     // nothing; each pair overwrites all four slots before reading them.
     final intersection = Float64List(4);
+    // Grid scratch lives for the whole spring phase so the every-10-tick
+    // refresh clears and refills buffers instead of reallocating them.
+    final repulsionScratch = _RepulsionGridScratch(nodeCount);
 
     for (var iteration = 0; iteration < maxIterations; iteration++) {
       final iterationNumber = iteration + 1;
@@ -584,12 +587,23 @@ final class FcoseLayout {
           );
         }
       }
-      final rectangles = graph.compounds.rectanglesFromLeaves({
-        for (final index in leafIndices)
-          nodes[index].id: Rect(leafLeft[index], leafTop[index], nodes[index].width, nodes[index].height),
-      }, padding: options.compoundPadding);
+      // Flat graphs have no compound bottom-up pass, so leaf corners go straight
+      // into the indexed table. Compounds still need the Map-based rebuild.
+      if (leafIndices.length == nodeCount) {
+        for (final index in leafIndices) {
+          final node = nodes[index];
+          rectangleByIndex[index] = Rect(leafLeft[index], leafTop[index], node.width, node.height);
+        }
+      } else {
+        final rectangles = graph.compounds.rectanglesFromLeaves({
+          for (final index in leafIndices)
+            nodes[index].id: Rect(leafLeft[index], leafTop[index], nodes[index].width, nodes[index].height),
+        }, padding: options.compoundPadding);
+        for (var index = 0; index < nodeCount; index++) {
+          rectangleByIndex[index] = rectangles[nodes[index].id]!;
+        }
+      }
       for (var index = 0; index < nodeCount; index++) {
-        rectangleByIndex[index] = rectangles[nodes[index].id]!;
         springForceX[index] = 0;
         springForceY[index] = 0;
         repulsionForceX[index] = 0;
@@ -606,6 +620,7 @@ final class FcoseLayout {
           layoutIndices,
           rootIndices,
           ownerIndices,
+          repulsionScratch,
         );
       }
       for (final (first, second) in repulsionPairs) {
@@ -682,19 +697,29 @@ final class FcoseLayout {
       for (final index in layoutIndices) {
         if (isFixed[index]) continue;
         final nodeRect = rectangleByIndex[index];
-        final position = nodeRect.center;
+        // Same arithmetic as Rect.center / Offset subtraction, without the
+        // temporary Offset objects those getters allocate each tick.
+        final centerX = nodeRect.x + nodeRect.width / 2;
+        final centerY = nodeRect.y + nodeRect.height / 2;
         var gravitationForceX = 0.0;
         var gravitationForceY = 0.0;
         final gravity = gravities[index];
         if (gravity != null) {
           final owner = ownerIds[index];
-          final bounds = ownerBounds.putIfAbsent(owner, () => graph.compounds.ownerBounds(owner, rectangles));
-          final ownerCenter = bounds.center;
-          final distance = position - ownerCenter;
-          if (distance.x.abs() + nodeRect.width / 2 > gravity.estimatedSize * gravity.range ||
-              distance.y.abs() + nodeRect.height / 2 > gravity.estimatedSize * gravity.range) {
-            gravitationForceX = -gravity.strength * distance.x;
-            gravitationForceY = -gravity.strength * distance.y;
+          final bounds = ownerBounds.putIfAbsent(owner, () {
+            final children = graph.graph.childrenByParent[owner]!;
+            var next = rectangleByIndex[indexOf[children.first.id]!];
+            for (final child in children.skip(1)) {
+              next = next.union(rectangleByIndex[indexOf[child.id]!]);
+            }
+            return next;
+          });
+          final distanceX = centerX - (bounds.x + bounds.width / 2);
+          final distanceY = centerY - (bounds.y + bounds.height / 2);
+          if (distanceX.abs() + nodeRect.width / 2 > gravity.estimatedSize * gravity.range ||
+              distanceY.abs() + nodeRect.height / 2 > gravity.estimatedSize * gravity.range) {
+            gravitationForceX = -gravity.strength * distanceX;
+            gravitationForceY = -gravity.strength * distanceY;
             final compound = gravity.compound;
             if (compound != null) {
               gravitationForceX *= compound;
@@ -746,7 +771,7 @@ final class FcoseLayout {
         final displacementY = leafDisplacementY[index];
         leafLeft[index] += displacementX;
         leafTop[index] += displacementY;
-        positions[node.id] = Rect(leafLeft[index], leafTop[index], node.width, node.height).center;
+        positions[node.id] = Offset(leafLeft[index] + node.width / 2, leafTop[index] + node.height / 2);
         totalDisplacement += displacementX.abs() + displacementY.abs();
       }
     }
@@ -863,8 +888,8 @@ final class FcoseLayout {
     Int32List layoutIndices,
     Int32List rootIndices,
     Int32List ownerIndices,
+    _RepulsionGridScratch scratch,
   ) {
-    final nodeCount = rectangles.length;
     var rootBounds = rectangles[rootIndices.first];
     for (final index in rootIndices.skip(1)) {
       rootBounds = rootBounds.union(rectangles[index]);
@@ -872,11 +897,12 @@ final class FcoseLayout {
     rootBounds = rootBounds.inflate(_layoutBaseGraphMargin);
     final sizeX = math.max(1, (rootBounds.width / repulsionRange).ceil());
     final sizeY = math.max(1, (rootBounds.height / repulsionRange).ceil());
-    final grid = List.generate(sizeX, (_) => List.generate(sizeY, (_) => <int>[]));
-    final startXs = Int32List(nodeCount);
-    final finishXs = Int32List(nodeCount);
-    final startYs = Int32List(nodeCount);
-    final finishYs = Int32List(nodeCount);
+    scratch.ensureGrid(sizeX, sizeY);
+    final grid = scratch.grid;
+    final startXs = scratch.startXs;
+    final finishXs = scratch.finishXs;
+    final startYs = scratch.startYs;
+    final finishYs = scratch.finishYs;
 
     for (final index in layoutIndices) {
       final rectangle = rectangles[index];
@@ -890,16 +916,16 @@ final class FcoseLayout {
       finishYs[index] = finishY;
       for (var x = startX; x <= finishX; x++) {
         for (var y = startY; y <= finishY; y++) {
-          grid[x][y].add(index);
+          scratch.addToCell(x, y, index);
         }
       }
     }
 
-    final processed = List.filled(nodeCount, false);
+    final processed = scratch.processed..fillRange(0, scratch.nodeCount, false);
     // Stamped with the outer node's index instead of cleared, which a plain
     // per-node set would need.
-    final surrounding = Int32List(nodeCount)..fillRange(0, nodeCount, -1);
-    final pairs = <(int, int)>[];
+    final surrounding = scratch.surrounding..fillRange(0, scratch.nodeCount, -1);
+    final pairs = scratch.pairs..clear();
     for (final first in layoutIndices) {
       for (var x = startXs[first] - 1; x < finishXs[first] + 2; x++) {
         for (var y = startYs[first] - 1; y < finishYs[first] + 2; y++) {
@@ -915,9 +941,11 @@ final class FcoseLayout {
             final firstRect = rectangles[first];
             final secondRect = rectangles[second];
             final distanceX =
-                (firstRect.center.x - secondRect.center.x).abs() - (firstRect.width + secondRect.width) / 2;
+                ((firstRect.x + firstRect.width / 2) - (secondRect.x + secondRect.width / 2)).abs() -
+                (firstRect.width + secondRect.width) / 2;
             final distanceY =
-                (firstRect.center.y - secondRect.center.y).abs() - (firstRect.height + secondRect.height) / 2;
+                ((firstRect.y + firstRect.height / 2) - (secondRect.y + secondRect.height / 2)).abs() -
+                (firstRect.height + secondRect.height) / 2;
             if (distanceX <= repulsionRange && distanceY <= repulsionRange) {
               pairs.add((first, second));
             }
@@ -1681,6 +1709,55 @@ const _maximumDisplacementPerCoolingUnit = 100;
 /// Below this length a clipped spring is treated as degenerate and skipped;
 /// `LEdge.updateLength()` marks such an edge as overlapping instead.
 const _degenerateSpringLength = 1e-7;
+
+/// Scratch tables for repulsion-grid rebuilds, grown once and cleared on each
+/// refresh so the spring phase does not reallocate the uniform grid every ten
+/// ticks.
+final class _RepulsionGridScratch {
+  _RepulsionGridScratch(this.nodeCount)
+    : startXs = Int32List(nodeCount),
+      finishXs = Int32List(nodeCount),
+      startYs = Int32List(nodeCount),
+      finishYs = Int32List(nodeCount),
+      processed = List<bool>.filled(nodeCount, false),
+      surrounding = Int32List(nodeCount);
+
+  final int nodeCount;
+  final Int32List startXs;
+  final Int32List finishXs;
+  final Int32List startYs;
+  final Int32List finishYs;
+  final List<bool> processed;
+  final Int32List surrounding;
+  final List<(int, int)> pairs = [];
+  final List<List<List<int>>> grid = [];
+
+  /// Cells that received at least one node during the previous fill; only these
+  /// need clearing, so a sparse graph does not pay `sizeX * sizeY`.
+  final List<List<int>> _occupiedCells = [];
+
+  void ensureGrid(int sizeX, int sizeY) {
+    for (final cell in _occupiedCells) {
+      cell.clear();
+    }
+    _occupiedCells.clear();
+    while (grid.length < sizeX) {
+      grid.add([]);
+    }
+    for (var x = 0; x < sizeX; x++) {
+      final column = grid[x];
+      while (column.length < sizeY) {
+        column.add(<int>[]);
+      }
+    }
+  }
+
+  void addToCell(int x, int y, int index) {
+    final cell = grid[x][y];
+    if (cell.isEmpty) _occupiedCells.add(cell);
+    cell.add(index);
+  }
+}
 
 final class _SpringPhaseResult {
   const _SpringPhaseResult(

@@ -6,13 +6,18 @@ A framework-independent, pure Dart port of
 
 The package accepts a typed compound graph and returns deterministic node
 centers and rectangles. It has no Cytoscape.js, browser, Flutter, FFI, or
-JavaScript runtime dependency. The Dart implementation is optimized for better
-performance, including compact packing data structures and reduced allocation
-and copying in layout hot paths.
+JavaScript runtime dependency, and no package dependencies at all. The Dart
+implementation is optimized for better performance, including compact packing
+data structures and reduced allocation and copying in layout hot paths.
 
-General fCoSE parity is still under development, so this prerelease is not yet
-a universal drop-in replacement for every cytoscape-fcose option and graph
-topology.
+Layouts are reproducible: the same graph, options, and `seed` produce the same
+coordinates on the Dart VM and on dart2js.
+
+## Install
+
+```sh
+dart pub add fcose:^0.1.0
+```
 
 ## Usage
 
@@ -52,69 +57,118 @@ final result = FcoseLayout(
 
 final apiCenter = result.positionOf('api');
 final clusterBounds = result.rectOf('cluster');
+final everything = result.boundsOf(['api', 'database', 'client']);
 ```
 
-When `randomize` is false, every leaf node must provide an initial position.
-Node widths and heights are measured layout dimensions. Edge ideal lengths are
-boundary-to-boundary distances, matching CoSE rather than center-to-center
-distances.
+`FcoseResult` carries `positions` and `rectangles` for every node, compounds
+included, plus the `iterations` the spring embedder actually ran.
+`positionOf`, `rectOf`, and `boundsOf` throw on an unknown ID rather than
+returning null.
 
-The scalar force defaults can be replaced with typed per-element resolvers:
-`nodeRepulsionFor`, `idealEdgeLengthFor`, and `edgeElasticityFor`. Resolver
-outputs are captured once per layout run. Explicit values on `FcoseNode` and
-`FcoseEdge` take precedence.
+### Semantics worth knowing before the first run
 
-## Implemented foundations
+- Node `width` and `height` are measured layout dimensions; the layout never
+  resizes a node, it only places it.
+- Edge ideal lengths are boundary-to-boundary distances, as in CoSE, not
+  center-to-center distances.
+- With `randomize: false` every leaf node must carry an initial position;
+  the layout refines what it is given instead of inventing a start.
+- A compound node's rectangle is derived bottom-up from its children plus
+  `compoundPadding`; giving one a width and height does not pin its size.
+- Scalar force defaults can be replaced with typed per-element resolvers:
+  `nodeRepulsionFor`, `idealEdgeLengthFor`, `edgeElasticityFor`, and the two
+  tiling-padding resolvers. Each is evaluated once per layout run, and an
+  explicit value on `FcoseNode` or `FcoseEdge` wins over a resolver.
 
-- validated undirected compound graph model;
-- sampled deterministic spectral initialization with root and nested-owner
-  dummy connections for disconnected child components;
-- rectangle-clipped CoSE springs and overlap separation;
-- per-node repulsion, CoSE-clamped grid neighborhoods, gravity, cooling, and
-  convergence;
-- same-owner leaf reduction, ten-tick staged regrowth, and post-growth
-  convergence/cooling;
-- live compound-node forces, nesting-aware edge lengths, and compound gravity;
-- disconnected-component detection, original-center relocation,
-  layout-utilities-compatible randomized polyomino packing, and incremental
-  POSE packing;
-- area-ordered or caller-sorted zero-degree tiling with randomized sibling
-  grouping, ideal-row-width organization, and bottom-up nested-compound
-  clearing/repopulation;
-- run-scoped lazy horizontal and vertical tiling-padding resolvers across flat
-  and nested tiling;
-- optional uniform-leaf center-distance spring and repulsion calculations;
-- bottom-up compound bounds with per-node Cytoscape-style padding, a typed
-  layout fallback, and label geometry;
-- transformed and displacement-relaxed fixed, alignment, and DAG placement
-  constraints;
-- cose-base-compatible cross-axis alignment dummy handling, including fixed
-  groups and deeply nested compound layouts;
-- axis-aware omitted relative-placement gaps derived from the average resolved
-  ideal edge length and both endpoint half-sizes, including mixed-size nested
-  compounds;
-- typed per-element force resolvers, first-edge handling for parallel edges,
-  and average resolved ideal length semantics for implicit constraint gaps;
-- upstream constraint interactions that disable tiling and component packing;
-- typed `all`, `transformed`, `enforced`, and `cose` constraint-pipeline
-  stages, transformed-stage bounds recentering, and draft-quality bypass of
-  the CoSE pipeline;
-- typed quality, greedy/random sampling, force, geometry, tiling, and
-  constraint options;
-- platform-stable seeded execution on the Dart VM and dart2js.
-- performance-oriented hot-path and packing implementations that reduce
-  temporary allocations, redundant copying, and grid-storage overhead.
+### Constraints
 
-## Remaining parity work
+```dart
+const FcoseOptions(
+  fixedNodes: [FixedNodeConstraint('client', Offset(0, 0))],
+  alignment: AlignmentConstraint(vertical: [['api', 'database']]),
+  relativePlacements: [
+    RelativePlacementConstraint.vertical('api', 'database', gap: 120),
+  ],
+);
+```
 
-The largest remaining parity work is:
+`vertical` alignment means a shared x coordinate, `horizontal` a shared y. An
+omitted `gap` follows upstream and resolves to the average ideal edge length
+plus half of each endpoint's size on the constrained axis. As upstream does,
+any constraint disables zero-degree tiling and component packing for the run.
 
-- broader randomized differential coverage for uncommon topology, overlapping
-  alignment, and fixed-node combinations.
+## Parity with upstream
 
-Browser presentation concerns such as animation, viewport fitting, event
-emission, and Cytoscape collection adaptation are intentionally outside this
-renderer-independent layout engine.
+Parity with cytoscape-fcose is this port's primary design constraint, and it
+is measured rather than asserted. The repository carries a differential
+harness that runs the original JavaScript under headless Cytoscape on the same
+fixture and diffs the coordinates:
+
+```sh
+cd tool/oracle && npm install
+dart run tool/parity.dart tool/oracle/specs/*.json --tolerance 0.5
+```
+
+24 fixtures cover unconstrained, constrained, randomized, draft, compound,
+tiled, and packed runs. 23 agree with upstream to about 1e-13; the 24th is a
+known upstream defect, described below. The suite also pins those coordinates
+as expectations in `test/fcose_test.dart`, so a regression fails without
+Node.js installed.
+
+### Known divergences and limits
+
+- `draft-disconnected` is the one fixture this port does not reproduce,
+  because upstream is wrong there: the two-node shortcut in `spectral.js` adds
+  the default function-valued `idealEdgeLength` to a coordinate without
+  calling it, so every component of exactly two nodes comes back with a
+  concatenated string and a `NaN`. This port computes the placement
+  numerically instead.
+- Randomized differential coverage of uncommon topology, overlapping
+  alignment, and fixed-node combinations is still thinner than the rest.
+- Component packing inherits layout-utilities' grid sizing, which scales with
+  the square of the component count and inversely with node size. Many small
+  components spread far apart can therefore ask for a grid too large to
+  allocate; the packer refuses such input with an `ArgumentError` instead of
+  attempting it. Raise `polyominoGridSizeFactor` or pack fewer components per
+  run.
+- Browser presentation concerns — animation, viewport fitting, event emission,
+  Cytoscape collection adaptation — are intentionally outside a
+  renderer-independent layout engine.
+
+## What is implemented
+
+**Spectral start.** Sampled deterministic initialization with greedy or random
+sampling, power iteration, a JAMA singular value decomposition transcribed
+from layout-base, and dummy connections that reach disconnected root and
+nested-owner child components.
+
+**Spring embedding.** Rectangle-clipped CoSE springs, overlap separation,
+per-node repulsion over CoSE-clamped grid neighborhoods, gravity, cooling, and
+convergence; same-owner leaf reduction with ten-tick staged regrowth and
+post-growth cooling; optional `uniformNodeDimensions` center-distance forces.
+
+**Compound graphs.** Bottom-up bounds with per-node Cytoscape-style padding
+and a layout-wide fallback, live compound forces, nesting-aware edge lengths,
+compound gravity, and label geometry.
+
+**Disconnected components.** Component detection, original-center relocation,
+layout-utilities-compatible randomized polyomino packing, and incremental POSE
+packing for `randomize: false`.
+
+**Tiling.** Area-ordered or caller-sorted zero-degree tiling with randomized
+sibling grouping, ideal-row-width organization, bottom-up clearing and
+repopulation of nested compounds, and run-scoped lazy padding resolvers.
+
+**Constraints.** Transformed and displacement-relaxed fixed, alignment, and
+DAG placement constraints, cose-base-compatible cross-axis alignment dummy
+handling including fixed groups and deeply nested compounds, and axis-aware
+gaps for omitted relative placements.
+
+**Options.** Typed quality, step, sampling, force, geometry, tiling, packing,
+and constraint options, including the `all`, `transformed`, `enforced`, and
+`cose` pipeline stages and the draft-quality bypass of the CoSE pipeline.
+
+`CHANGELOG.md` records each parity slice as it landed.
 
 ## Upstream mapping
 
@@ -123,6 +177,7 @@ renderer-independent layout engine.
 | geometry, graph validation, components | `layout-base` |
 | spring embedding, cooling, compound bounds | `cose-base` |
 | spectral start, constraints, public options | `cytoscape-fcose` 2.2.0 |
+| component packing | `cytoscape-layout-utilities` 1.1.1 |
 
 The public API expresses these algorithms with Dart value types and enums
 instead of reproducing Cytoscape.js collection and callback conventions.

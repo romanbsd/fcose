@@ -6,9 +6,10 @@ A framework-independent, pure Dart port of
 
 The package accepts a typed compound graph and returns deterministic node
 centers and rectangles. It has no Cytoscape.js, browser, Flutter, FFI, or
-JavaScript runtime dependency, and no package dependencies at all. The Dart
-implementation is optimized for better performance, including compact packing
-data structures and reduced allocation and copying in layout hot paths.
+JavaScript runtime dependency, and no package dependencies at all. Layout hot
+paths use compact packing structures and reduced allocation; see
+[Performance versus upstream](#performance-versus-upstream) for measured
+comparisons against cytoscape-fcose.
 
 Layouts are reproducible: the same graph, options, and `seed` produce the same
 coordinates on the Dart VM and on dart2js.
@@ -96,6 +97,35 @@ const FcoseOptions(
 omitted `gap` follows upstream and resolves to the average ideal edge length
 plus half of each endpoint's size on the constrained axis. As upstream does,
 any constraint disables zero-degree tiling and component packing for the run.
+
+## Performance versus upstream
+
+Wall times below compare an AOT Dart binary (`dart compile exe`) to
+cytoscape-fcose 2.2.0 under Node.js on the same 800-node grid
+(`quality: proof`, packing and tiling off, seed 7). Use AOT for this kind of
+comparison: `dart run` is a JIT session and understates the port on long
+spring runs.
+
+| Workload | Dart AOT | cytoscape-fcose 2.2.0 | Speedup |
+| --- | ---: | ---: | ---: |
+| Common path — `randomize: true`, ~100 spring ticks | 37 ms | 105 ms | 2.8× |
+| Long CoSE — `randomize: false`, `step: cose`, identical starts, 2900 ticks | 1295 ms | 2078 ms | 1.6× |
+
+The long-path row feeds both sides the same leaf coordinates so each runs the
+same tick count; a different start PRNG can stop early and is not comparable.
+Measured on macOS arm64 (Apple Silicon) with Node v26.
+
+Reproduce:
+
+```sh
+dart compile exe -o /tmp/fcose_bench tool/bench_layout.dart
+/tmp/fcose_bench
+cd tool/oracle && npm install && node bench.js
+```
+
+`tool/bench_layout.dart` times the Dart side; `tool/oracle/bench.js` times the
+upstream layout. For a tick-matched long run, share one position dump between
+them rather than regenerating starts independently.
 
 ## Parity with upstream
 

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:fcose/fcose.dart';
 import 'package:fcose/src/packing.dart';
 import 'package:fcose/src/pose_packing.dart';
@@ -278,6 +280,78 @@ void main() {
       }
     }
   });
+  test('randomized polyomino packing separates hundreds of components', () {
+    final components = _scatteredComponents(800);
+    final before = PackingComponent.combinedBounds(components).center;
+
+    final watch = Stopwatch()..start();
+    final shifts = const RandomizedComponentPacker().pack(components);
+    final elapsed = watch.elapsed;
+    final packed = [for (final (index, component) in components.indexed) component.translated(shifts[index])];
+
+    expect(_overlappingPairs(packed), 0);
+    expect(PackingComponent.combinedBounds(packed).center, before);
+    // The grid is laid out once and each polyomino placed into it, so the cost
+    // is near linear in the component count; the ceiling is two orders of
+    // magnitude above the measured time, which leaves it insensitive to a busy
+    // machine while still catching a change of complexity class.
+    expect(elapsed, lessThan(const Duration(seconds: 10)));
+  });
+
+  test('incremental POSE packing stays finite and repeatable at hundreds of components', () {
+    final components = _scatteredComponents(800);
+
+    final watch = Stopwatch()..start();
+    final shifts = const IncrementalComponentPacker(componentSpacing: 80).pack(components);
+    final elapsed = watch.elapsed;
+
+    for (final shift in shifts) {
+      expect(shift.x.isFinite, isTrue);
+      expect(shift.y.isFinite, isTrue);
+    }
+    // Upstream's POSE is a fixed number of force steps over a Delaunay
+    // triangulation, not a separation algorithm: it leaves components
+    // overlapping when they start crowded, and the only guarantees at this size
+    // are that it terminates with finite shifts and repeats itself.
+    expect(const IncrementalComponentPacker(componentSpacing: 80).pack(components), shifts);
+    expect(elapsed, lessThan(const Duration(seconds: 10)));
+  });
+}
+
+/// Single-node components spread over a wide area, sized and placed by a
+/// generator of its own so the fixture cannot shift when the layout's random
+/// stream changes.
+List<PackingComponent> _scatteredComponents(int count) {
+  final random = math.Random(1);
+  return [
+    for (var index = 0; index < count; index++)
+      PackingComponent(
+        nodes: [
+          Rect(
+            random.nextInt(4000).toDouble(),
+            random.nextInt(4000).toDouble(),
+            30 + random.nextInt(40).toDouble(),
+            20 + random.nextInt(40).toDouble(),
+          ),
+        ],
+        edges: const [],
+      ),
+  ];
+}
+
+int _overlappingPairs(List<PackingComponent> components) {
+  final bounds = [
+    for (final component in components) PackingComponent.combinedBounds([component]),
+  ];
+  var count = 0;
+  for (var first = 0; first < bounds.length; first++) {
+    for (var second = first + 1; second < bounds.length; second++) {
+      final a = bounds[first];
+      final b = bounds[second];
+      if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) count++;
+    }
+  }
+  return count;
 }
 
 void _expectOffsetClose(Offset actual, Offset expected, {double tolerance = 1e-12}) {

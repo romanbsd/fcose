@@ -63,3 +63,6 @@
   stands half a border and an antialiasing pixel outside its children's, so a
   graph mixing compounds with plain nodes settled three quarters of a pixel
   away from upstream.
+- Guard both packers at eight hundred components: the polyomino packer against
+  overlap and a moved center, the POSE packer against non-finite or
+  irreproducible shifts, and both against a change of complexity class.

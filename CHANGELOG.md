@@ -66,3 +66,7 @@
 - Guard both packers at eight hundred components: the polyomino packer against
   overlap and a moved center, the POSE packer against non-finite or
   irreproducible shifts, and both against a change of complexity class.
+- Document the polyomino packing grid's sizing on
+  `FcoseOptions.polyominoGridSizeFactor`: it follows layout-utilities, so many
+  small components spread far apart can ask for a grid too large to allocate,
+  which the packer refuses with an `ArgumentError`.

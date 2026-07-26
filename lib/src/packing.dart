@@ -49,6 +49,22 @@ final class PackingComponent {
 }
 
 /// Randomized polyomino packing from cytoscape-layout-utilities 1.1.1.
+///
+/// Every component is rasterized onto one shared grid of square cells, and the
+/// grid is sized for the worst case: `2 * sum(component extents) / gridStep`
+/// cells per axis, where `gridStep` is the average node dimension scaled by
+/// [gridSizeFactor]. Both terms work against a graph of many small components:
+/// the numerator grows with their count, the denominator falls with their
+/// size, and the product of the two axes squares the result. Eight hundred
+/// nodes of ordinary size pack in a few tens of milliseconds; the same count
+/// of two-pixel nodes scattered across a large plane asks for a grid that
+/// cannot be allocated at all.
+///
+/// [pack] refuses such a request with an [ArgumentError] instead of allocating
+/// it. The sizing itself is upstream's and is left alone deliberately: a
+/// bounded grid would place components differently from layout-utilities, and
+/// parity with upstream outranks robustness on inputs it cannot handle either.
+/// Raise [gridSizeFactor] or pack fewer components in one call.
 final class RandomizedComponentPacker {
   /// Subtracted from `componentSpacing`, as layout-utilities puts it, "to make
   /// it compatible with the incremental packing". Polyominos inflate every node
@@ -82,6 +98,9 @@ final class RandomizedComponentPacker {
 
   final double componentSpacing;
   final double desiredAspectRatio;
+
+  /// Scales the grid cell away from the average node dimension, trading
+  /// packing tightness for cells; see the class documentation.
   final double gridSizeFactor;
   final PackingUtility utility;
 

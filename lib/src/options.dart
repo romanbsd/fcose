@@ -129,6 +129,16 @@ final class FcoseOptions {
   final double desiredPackingAspectRatio;
 
   /// Multiplier for the average-node-dimension polyomino grid size.
+  ///
+  /// layout-utilities measures its packing grid in cells of
+  /// `averageNodeDimension * polyominoGridSizeFactor` pixels, and makes the
+  /// grid twice as wide and twice as tall as every component laid end to end.
+  /// The cell count therefore grows with the square of the component count and
+  /// shrinks only with the node size, so a graph of many small components far
+  /// apart asks for a grid orders of magnitude larger than the packing it ends
+  /// up producing. Raising this factor is the way out: it costs packing
+  /// tightness and buys back cells quadratically. A request too large to
+  /// allocate is refused with an [ArgumentError] rather than attempted.
   final double polyominoGridSizeFactor;
   final PackingUtility packingUtility;
   final bool tile;
